@@ -17,6 +17,7 @@ from stacksentry.models import MonitorSnapshot, PanelHealth, SystemMetrics
 from stacksentry.settings import ConfigError, Settings, load_settings
 from stacksentry.storage import Storage
 from stacksentry.totp import totp_code
+from stacksentry.updates import UpdateInfo
 from stacksentry.webapp import (
     WebAppConfig,
     create_app,
@@ -140,8 +141,52 @@ def test_terminal_tab_origin_and_csp(
     meta = client.get("/api/meta")
     assert meta.status_code == 200
     assert meta.json()["terminal_origin"] == "https://term.example.com"
+    assert meta.json()["version"]
     policy = meta.headers["Content-Security-Policy"]
     assert "frame-src 'self' https://term.example.com" in policy
+
+
+def test_update_endpoint_is_cached_and_health_is_public(
+    make_settings: Callable[..., Settings],
+    storage: Storage,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    settings = make_settings(webapp_enabled=True, webapp_secret=SECRET)
+    app = create_app(
+        _config(settings),
+        monitor=FakeMonitor(),  # type: ignore[arg-type]
+        storage=storage,
+    )
+    calls: list[int] = []
+
+    def fake_update(**_kwargs: object) -> UpdateInfo:
+        calls.append(1)
+        return UpdateInfo(
+            current_version="1.0.0",
+            current_sha="a" * 40,
+            remote_sha="b" * 40,
+            remote_version="1.1.0",
+            remote_date="29.10.2026 10:00 UTC",
+            remote_message="Обновление",
+            update_available=True,
+            repo="Hijackery/stacksentry",
+        )
+
+    monkeypatch.setattr("stacksentry.webapp.check_for_update", fake_update)
+    client = TestClient(app)
+
+    assert client.get("/healthz").status_code == 200
+    assert client.get("/api/update").status_code == 401
+    client.post("/api/session", json={"initData": _init_data(settings.telegram_token)})
+
+    first = client.get("/api/update")
+    second = client.get("/api/update")
+
+    assert first.status_code == 200
+    assert first.json()["update_available"] is True
+    assert first.json()["current_sha"] == "aaaaaaa"
+    assert second.json() == first.json()
+    assert calls == [1]
 
 
 def test_2fa_gate_for_webapp(
@@ -238,6 +283,9 @@ def test_mini_app_has_help_tab() -> None:
     assert "function renderHelp()" in js
     assert 'state.active === "help"' in js
     assert "Если 2FA выключена, TOTP не запрашивается нигде" in js
+    assert "update-banner" in js
+    assert "Новая версия StackSentry" in js
+    assert "loadUpdate" in js
 
 
 def test_cookie_flags(make_settings: Callable[..., Settings], storage: Storage) -> None:

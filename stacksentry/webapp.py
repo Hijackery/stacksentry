@@ -16,18 +16,20 @@ import secrets
 import time
 from dataclasses import asdict, dataclass, replace
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
 from fastapi import Depends, FastAPI, HTTPException, Request, Response
 from fastapi.responses import JSONResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, ConfigDict, Field
 
+from . import __version__
 from .monitor import Monitor
 from .settings import ConfigError, Settings, load_settings
 from .storage import Storage
 from .terminal.auth import RateLimiter, validate_init_data
 from .totp import ReplayGuard, normalize_totp, verify_totp
+from .updates import check_for_update
 
 COOKIE_NAME = "stacksentry_session"
 STATIC_DIR = Path(__file__).resolve().parent / "webapp_static"
@@ -166,6 +168,8 @@ def create_app(
     storage = storage or Storage(config.settings.state_path)
     snapshot_cache: dict[str, Any] = {"value": None, "at": 0.0}
     snapshot_lock = asyncio.Lock()
+    update_cache: dict[str, Any] = {"value": None, "at": 0.0}
+    update_lock = asyncio.Lock()
     totp_replay = ReplayGuard(ttl=120.0, claim=storage.claim_replay)
     init_replay = ReplayGuard(ttl=360.0, claim=storage.claim_replay)
     totp_limiter = RateLimiter(limit=5, window=60.0)
@@ -306,11 +310,45 @@ def create_app(
     @app.get("/api/meta")
     async def meta(user_id: int = Depends(current_user)) -> dict[str, Any]:
         return {
+            "version": __version__,
             "panel_enabled": config.settings.panel_enabled,
             "services": list(config.settings.services),
             "require_2fa": config.settings.require_2fa,
             "terminal_origin": config.terminal_origin,
         }
+
+    @app.get("/api/update")
+    async def update(user_id: int = Depends(current_user)) -> dict[str, Any]:
+        """Проверка обновлений StackSentry без права что-либо устанавливать."""
+        now = time.monotonic()
+        cached = update_cache["value"]
+        if cached is not None and now - update_cache["at"] <= 900:
+            return cast(dict[str, Any], cached)
+        async with update_lock:
+            now = time.monotonic()
+            cached = update_cache["value"]
+            if cached is not None and now - update_cache["at"] <= 900:
+                return cast(dict[str, Any], cached)
+            info = await asyncio.to_thread(check_for_update)
+            payload = {
+                "current_version": info.current_version,
+                "current_sha": info.current_short,
+                "remote_sha": info.remote_short,
+                "remote_version": info.remote_version,
+                "remote_date": info.remote_date,
+                "remote_message": info.remote_message,
+                "update_available": info.update_available,
+                "repo": info.repo,
+                "error": info.error,
+                "checked_at": time.time(),
+            }
+            update_cache["value"] = payload
+            update_cache["at"] = time.monotonic()
+            return payload
+
+    @app.get("/healthz")
+    async def healthz() -> dict[str, Any]:
+        return {"ok": True, "version": __version__}
 
     @app.get("/api/status")
     async def status(user_id: int = Depends(current_user)) -> dict[str, Any]:

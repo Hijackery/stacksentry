@@ -29,6 +29,7 @@ from .app_constants import (
     REBOOT_WATCH_GRACE,
     REBOOT_WATCH_STEP,
     SAMPLE_RETENTION_DAYS,
+    UPDATE_NOTIFIED_KEY,
 )
 from .app_utils import (
     _alert_actions,
@@ -37,6 +38,7 @@ from .app_utils import (
     _safe_edit,
     _split_alerts,
 )
+from .updates import check_for_update
 
 logger = logging.getLogger(__name__)
 
@@ -469,6 +471,31 @@ class JobsMixin(BotBase):
             f"Сервисы: {'ок' if services_ok else 'есть проблемы'} · "
             f"панель: {panel_text}",
         )
+
+    async def job_update_check(self, _context: ContextTypes.DEFAULT_TYPE) -> None:
+        """Один раз уведомляет админов о новом commit в main."""
+        try:
+            info = await asyncio.to_thread(check_for_update)
+        except Exception:  # noqa: BLE001 — фоновая проверка не должна падать
+            logger.debug("Проверка обновлений не удалась", exc_info=True)
+            return
+        if info.error or info.update_available is not True or not info.remote_sha:
+            return
+        last = await asyncio.to_thread(self.storage.get_meta, UPDATE_NOTIFIED_KEY)
+        if last == info.remote_sha:
+            return
+        delivered = True
+        for chat_id in self.settings.admin_ids:
+            delivered = (
+                await self._notify(
+                    chat_id, ui.render_update(info), markup=ui.update_menu(info)
+                )
+                and delivered
+            )
+        if delivered:
+            await asyncio.to_thread(
+                self.storage.set_meta, UPDATE_NOTIFIED_KEY, info.remote_sha
+            )
 
     async def job_check(self, _context: ContextTypes.DEFAULT_TYPE) -> None:
         try:

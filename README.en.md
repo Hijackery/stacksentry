@@ -244,7 +244,7 @@ Useful options: `--repo owner/name`, `--ref branch`, `--prefix DIR`, `--user NAM
 `--menu`. Full list: `bash install.sh --help`.
 
 Re-running the installer updates the code and keeps `.env`/state; to check for
-updates from the bot use `/updatecheck` and the Maintenance button.
+updates from the bot use `/updatecheck`, the Help button and the Mini App Help tab.
 
 ## Connecting to the panel
 
@@ -616,6 +616,8 @@ over the file.
 | `ALERT_COOLDOWN` | how often an active alert repeats, seconds |
 | `EXPIRING_SOON_DAYS` | days before expiry when a subscription is “soon” |
 | `CHECK_INTERVAL` | background check period, seconds (minimum 15) |
+| `UPDATE_NOTIFY` | `1`: notify admins about a new StackSentry commit in main |
+| `UPDATE_CHECK_INTERVAL` | background update check period, seconds (minimum 3600) |
 | `ACTION_COOLDOWN` | pause between identical actions, seconds |
 | `CONFIRM_TTL` | confirmation button lifetime, seconds |
 | `TOTP_SECRET` | TOTP secret (base32) for 2FA; empty: disabled |
@@ -854,7 +856,7 @@ sudo stacksentry-menu          # item 24
 
 # check for updates without installing anything
 sudo stacksentry-menu update-check
-# or in the bot: /updatecheck / the “🔄 Check for StackSentry updates” button
+# or in the bot: /updatecheck / Help → “🔄 Check for updates”
 
 # in the bot: when an update exists an “⬆️ Update StackSentry” button appears
 # (confirmation + fresh TOTP; .env and state are kept)
@@ -937,8 +939,8 @@ More in [SECURITY.md](SECURITY.md) and [CHANGELOG.md](CHANGELOG.md).
 
 - SemVer; the current version lives in `stacksentry/__init__.py` and `/version`.
 - GitHub Releases and tags are **not published**: `main` is the current version.
-- Check for updates: the “🔄 Check for StackSentry updates” button under
-  Maintenance, `sudo stacksentry-menu update-check`, or `/updatecheck`.
+- Check for updates: the “🔄 Check for updates” button in Help, the Mini App
+  Help tab, `sudo stacksentry-menu update-check`, or `/updatecheck`.
 - When an update exists, the bot shows “⬆️ Update StackSentry”. It requires
   confirmation and a fresh TOTP (when 2FA is enabled), keeps `.env` and state,
   then restarts the bot.

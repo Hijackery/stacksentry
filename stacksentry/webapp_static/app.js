@@ -10,20 +10,24 @@
   const hash = new URLSearchParams(location.hash.replace(/^#/, ""));
   const tg = window.Telegram && window.Telegram.WebApp;
   const initData = hash.get("tgWebAppData") || (tg && tg.initData) || "";
-  // initData — одноразовый админ-креденшел: не оставляем его в адресной строке.
-  if (location.hash) {
-    history.replaceState(null, "", location.pathname + location.search);
-  }
   const BASE_TABS = [
     ["overview", "Обзор"], ["services", "Службы"], ["panel", "Панель"],
     ["traffic", "Трафик"], ["subs", "Подписки"], ["history", "История"],
     ["help", "Помощь"],
   ];
 
+  const requestedTab = hash.get("tab") || "overview";
+  const initialTab = BASE_TABS.some(([key]) => key === requestedTab)
+    ? requestedTab
+    : "overview";
   const state = {
     tabs: BASE_TABS.slice(),
-    active: "overview",
+    active: initialTab,
     snapshot: null,
+    version: "",
+    update: null,
+    updateAt: 0,
+    updateLoading: false,
     metaLoaded: false,
     terminalOrigin: "",
     authPending: false,
@@ -35,6 +39,15 @@
     subsSort: "usage",
     timer: null,
   };
+
+  function syncTabHash() {
+    const suffix = state.active !== "overview"
+      ? `#tab=${encodeURIComponent(state.active)}`
+      : "";
+    if (location.hash !== suffix) {
+      history.replaceState(null, "", location.pathname + location.search + suffix);
+    }
+  }
 
   const ICONS = {
     ok: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="9"></circle><path d="m9 12 2 2 4-4"></path></svg>',
@@ -290,6 +303,81 @@
     ].filter(Boolean).join("");
   }
 
+  function renderUpdateCard() {
+    const info = state.update;
+    let tone = "warn";
+    let chip = "не проверено";
+    let details = "";
+    if (state.updateLoading) {
+      chip = "проверяю";
+      details = '<p class="hint">Сравниваю установленный commit с веткой main.</p>';
+    } else if (info && info.error) {
+      tone = "bad";
+      chip = "ошибка";
+      details = `<p class="hint">${esc(info.error)}</p>`;
+    } else if (info) {
+      if (info.update_available === true) {
+        tone = "warn";
+        chip = "есть обновление";
+      } else if (info.update_available === false) {
+        tone = "ok";
+        chip = "актуально";
+      } else {
+        chip = "не сравнить";
+      }
+      details = `<div class="kv">
+        <div class="kv-row"><span>Установлено</span><strong>${esc(info.current_version || "—")} · ${esc(info.current_sha || "—")}</strong></div>
+        <div class="kv-row"><span>В main</span><strong>${esc(info.remote_version || "—")} · ${esc(info.remote_sha || "—")}</strong></div>
+        ${info.remote_date ? `<div class="kv-row"><span>Последний commit</span><strong>${esc(info.remote_date)}</strong></div>` : ""}
+      </div>
+      ${info.remote_message ? `<p class="hint">${esc(info.remote_message)}</p>` : ""}
+      <p class="hint">Установка: бот → «❓ Помощь» → «🔄 Проверить обновления», затем «⬆️ Обновить StackSentry».</p>`;
+    } else {
+      details = '<p class="hint">Проверьте, есть ли новая версия StackSentry в main.</p>';
+    }
+    return `<section class="card update-card" id="update-card">
+      <div class="card-head"><h2>Обновления StackSentry</h2><span class="chip ${tone}">${esc(chip)}</span></div>
+      ${details}
+      <button class="ghost" type="button" data-check-update ${state.updateLoading ? "disabled" : ""}>${state.updateLoading ? "Проверяю…" : "Проверить обновления"}</button>
+    </section>`;
+  }
+
+  function refreshUpdateBanner() {
+    const banner = $("update-banner");
+    if (!banner) return;
+    const info = state.update;
+    if (!info || info.update_available !== true) {
+      banner.hidden = true;
+      banner.innerHTML = "";
+      return;
+    }
+    banner.hidden = false;
+    banner.innerHTML = `<span><strong>Новая версия StackSentry</strong> · ${esc(info.current_version || "—")} → ${esc(info.remote_version || info.remote_sha || "—")}</span>
+      <button class="link-button" type="button" data-update-help>Подробнее</button>`;
+  }
+
+  function refreshUpdateCard() {
+    const card = $("update-card");
+    if (card) card.outerHTML = renderUpdateCard();
+    refreshUpdateBanner();
+  }
+
+  async function loadUpdate(force = false) {
+    if (state.updateLoading) return;
+    if (!force && state.update && Date.now() - state.updateAt < 60000) return;
+    state.updateLoading = true;
+    refreshUpdateCard();
+    try {
+      state.update = await api("/api/update");
+    } catch (error) {
+      state.update = { error: error.message || "Не удалось проверить обновления." };
+    } finally {
+      state.updateAt = Date.now();
+      state.updateLoading = false;
+      refreshUpdateCard();
+    }
+  }
+
   function renderHelp() {
     const cards = [
       ["Обзор", "Вердикт по серверу, CPU/RAM/диск, клиенты и трафик. Данные обновляются автоматически; кнопка «Обновить» перезапрашивает снимок."],
@@ -300,10 +388,15 @@
       ["Терминал", "Появляется, только если включён веб-терминал. Это отдельная сессия со своим TOTP; при первом открытии введите код."],
       ["2FA", "Если 2FA включена при установке, вход в Mini App требует 6-значный код, а опасные действия в боте — подтверждение. Если 2FA выключена, TOTP не запрашивается нигде. Секрет и QR: <code>sudo stacksentry-menu totp</code>."],
       ["Бот", "Команды: <code>/status</code>, <code>/subs</code>, <code>/traffic</code>, <code>/history</code>, <code>/maint</code>, <code>/help</code>. Опасные действия — только в личке администратора."],
-      ["Обновление", "Проверка обновлений — в боте «Обслуживание» или <code>sudo stacksentry-menu update-check</code>; установка — <code>sudo stacksentry-menu update</code>."],
+      ["Обновление", "Проверка обновлений доступна здесь, в боте «❓ Помощь» или командой <code>sudo stacksentry-menu update-check</code>; установка — из бота или <code>sudo stacksentry-menu update</code>."],
     ];
+    const cardsHtml = cards.map(([title, text], index) => `<details class="card help-card"${index === 0 ? " open" : ""}>
+      <summary><h2>${title}</h2><span class="help-chevron" aria-hidden="true">⌄</span></summary>
+      <div class="help-body"><p class="hint">${text}</p></div>
+    </details>`).join("");
+    if (!state.update && !state.updateLoading) setTimeout(() => loadUpdate(false), 0);
     return renderHero("ok", "Помощь", "Короткая инструкция по разделам Mini App и боту.") +
-      cards.map(([title, text]) => `<section class="card"><div class="card-head"><h2>${title}</h2></div><p class="hint">${text}</p></section>`).join("");
+      renderUpdateCard() + cardsHtml;
   }
 
   function renderServices() {
@@ -727,6 +820,7 @@
     }
     state.active = key;
     state.historyToken += 1;
+    syncTabHash();
     renderTabs();
     if (focus) {
       const current = $(`tab-${key}`);
@@ -868,11 +962,13 @@
     try {
       const meta = await api("/api/meta");
       state.metaLoaded = true;
+      state.version = meta.version || "";
       state.terminalOrigin = meta.terminal_origin || "";
       state.tabs = state.terminalOrigin
         ? [...BASE_TABS, ["terminal", "Терминал"]]
         : BASE_TABS.slice();
       if (state.active === "terminal" && !state.terminalOrigin) state.active = "overview";
+      syncTabHash();
       renderTabs();
     } catch (_) {
       renderTabs();
@@ -897,6 +993,7 @@
       state.authRetry = 0;
       await loadMeta();
       await render();
+      if (!state.update && !state.updateLoading) loadUpdate(false);
     } catch (error) {
       if (error.status === 401) {
         if (state.authRetry > 0) {
@@ -932,6 +1029,10 @@
   view.setAttribute("role", "tabpanel");
   terminalView.setAttribute("role", "tabpanel");
 
+  $("update-banner").addEventListener("click", (event) => {
+    if (event.target.closest("[data-update-help]")) switchTab("help");
+  });
+
   $("refresh").addEventListener("click", async () => {
     if (state.loading || state.authPending) return;
     await load();
@@ -962,6 +1063,10 @@
     const nav = event.target.closest("[data-nav]");
     if (nav) {
       switchTab(nav.dataset.nav);
+      return;
+    }
+    if (event.target.closest("[data-check-update]")) {
+      loadUpdate(true);
       return;
     }
     if (event.target.closest("[data-retry]")) {
@@ -998,6 +1103,7 @@
     if (state.timer) clearInterval(state.timer);
   });
 
+  syncTabHash();
   renderTabs();
   load();
   state.timer = setInterval(() => {

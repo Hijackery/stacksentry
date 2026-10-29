@@ -208,6 +208,13 @@ class MonitorBot(CommandMixin, JobsMixin):
             first=timedelta(seconds=10),
             name="periodic-check",
         )
+        if self.settings.update_notify:
+            job_queue.run_repeating(
+                self.job_update_check,
+                interval=timedelta(seconds=self.settings.update_check_interval),
+                first=timedelta(minutes=2),
+                name="update-notify",
+            )
         job_queue.run_repeating(
             self.job_prune,
             interval=timedelta(hours=6),
@@ -576,6 +583,13 @@ class MonitorBot(CommandMixin, JobsMixin):
                 markup=ui.audit_menu(),
             )
         elif data == "help":
+            webapp_url = ""
+            if (
+                self.is_admin(user_id)
+                and self.settings.webapp_enabled
+                and self.settings.webapp_public_origin
+            ):
+                webapp_url = self.settings.webapp_public_origin
             await self._edit(
                 query,
                 ui.render_help(
@@ -583,8 +597,10 @@ class MonitorBot(CommandMixin, JobsMixin):
                     settings=self.settings,
                     package_manager=self.platform.package_manager,
                 ),
-                markup=self._main_menu(user_id),
+                markup=ui.help_menu(webapp_url=webapp_url),
             )
+        elif data == "version":
+            await self._show_version(query)
         elif data == "update_check":
             await self._show_update_check(query)
         elif data == "maintenance":

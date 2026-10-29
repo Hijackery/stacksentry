@@ -79,6 +79,11 @@ CREATE TABLE IF NOT EXISTS screen_state (
     message_id INTEGER NOT NULL,
     updated_at REAL NOT NULL
 );
+
+CREATE TABLE IF NOT EXISTS bot_meta (
+    key TEXT PRIMARY KEY,
+    value TEXT NOT NULL
+);
 """
 
 
@@ -333,6 +338,27 @@ class Storage:
             self.conn.execute(
                 "DELETE FROM pending_jobs WHERE created_at < ?", (older_than,)
             )
+
+    # --------------------------------------------------------------- bot meta
+
+    def get_meta(self, key: str, default: str = "") -> str:
+        with self._lock:
+            row = self.conn.execute(
+                "SELECT value FROM bot_meta WHERE key = ?", (key,)
+            ).fetchone()
+        return str(row["value"]) if row else default
+
+    def set_meta(self, key: str, value: str) -> None:
+        with self._lock:
+            self.conn.execute(
+                "INSERT INTO bot_meta (key, value) VALUES (?, ?) "
+                "ON CONFLICT(key) DO UPDATE SET value = excluded.value",
+                (key, value),
+            )
+
+    def delete_meta(self, key: str) -> None:
+        with self._lock:
+            self.conn.execute("DELETE FROM bot_meta WHERE key = ?", (key,))
 
     # ---------------------------------------------------------- screen state
 

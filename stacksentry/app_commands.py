@@ -108,6 +108,20 @@ class CommandMixin(BotBase):
             ),
         )
 
+    def _version_text(self) -> str:
+        panel = ui.panel_title(self.settings.panel_type)
+        panel_state = "API включён" if self.settings.panel_enabled else "monitor-only"
+        os_name = self.platform.os_name or self.platform.os_id or "ОС неизвестна"
+        return (
+            "🛰 <b>StackSentry</b> "
+            f"{ui.esc(__version__)}\n"
+            f"Python {ui.esc(sys.version.split()[0])} · "
+            f"{ui.esc(os_name)}\n"
+            f"init: {ui.esc(self.platform.init or '?')} · "
+            f"пакеты: {ui.esc(self.platform.package_manager or '?')}\n"
+            f"Панель: {ui.esc(panel)} ({panel_state})"
+        )
+
     async def cmd_version(
         self, update: Update, _context: ContextTypes.DEFAULT_TYPE
     ) -> None:
@@ -115,20 +129,12 @@ class CommandMixin(BotBase):
         message = update.effective_message
         if message is None or not await self._guard(message, update.effective_user):
             return
-        panel = ui.panel_title(self.settings.panel_type)
-        panel_state = "API включён" if self.settings.panel_enabled else "monitor-only"
-        os_name = self.platform.os_name or self.platform.os_id or "ОС неизвестна"
         await self._reply_screen(
-            message,
-            "🛰 <b>StackSentry</b> "
-            f"{ui.esc(__version__)}\n"
-            f"Python {ui.esc(sys.version.split()[0])} · "
-            f"{ui.esc(os_name)}\n"
-            f"init: {ui.esc(self.platform.init or '?')} · "
-            f"пакеты: {ui.esc(self.platform.package_manager or '?')}\n"
-            f"Панель: {ui.esc(panel)} ({panel_state})",
-            markup=ui.version_menu(),
+            message, self._version_text(), markup=ui.version_menu()
         )
+
+    async def _show_version(self, query: CallbackQuery) -> None:
+        await self._edit(query, self._version_text(), markup=ui.version_menu())
 
     async def cmd_updatecheck(
         self, update: Update, _context: ContextTypes.DEFAULT_TYPE

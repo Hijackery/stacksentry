@@ -185,6 +185,10 @@ class Settings:
     #: Публичный адрес терминала для вкладки внутри Mini App.
     webapp_terminal_origin: str = ""
 
+    #: Фоновая проверка новых версий StackSentry и уведомление админов.
+    update_notify: bool = True
+    update_check_interval: int = 21600
+
     extra: dict[str, str] = field(default_factory=dict, repr=False)
 
     def is_admin(self, telegram_id: int | None) -> bool:
@@ -286,6 +290,8 @@ def _build_settings() -> Settings:
         webapp_secret=env_str("WEBAPP_SECRET").strip(),
         webapp_session_ttl=env_int("WEBAPP_SESSION_TTL", 3600, minimum=300),
         webapp_terminal_origin=env_str("WEBAPP_TERMINAL_ORIGIN").strip().rstrip("/"),
+        update_notify=env_bool("UPDATE_NOTIFY", True),
+        update_check_interval=env_int("UPDATE_CHECK_INTERVAL", 21600, minimum=3600),
     )
 
     problems = _validate(settings)

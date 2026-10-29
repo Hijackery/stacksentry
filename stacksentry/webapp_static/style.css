@@ -117,6 +117,16 @@ a { color: var(--link); }
 .icon-button:disabled { opacity: .55; cursor: default; }
 @keyframes spin { to { transform: rotate(360deg); } }
 
+.update-banner {
+  display: flex; align-items: center; justify-content: space-between; gap: 10px;
+  margin: 0 0 9px; padding: 9px 12px; border-radius: var(--radius-sm);
+  border: 1px solid color-mix(in srgb, var(--warn) 30%, transparent);
+  background: color-mix(in srgb, var(--warn) 12%, var(--surface));
+  color: var(--text); font-size: 12px;
+}
+.update-banner strong { color: var(--warn); }
+.update-banner button { flex: 0 0 auto; }
+
 .tabs {
   display: flex; gap: 2px; overflow-x: auto; scrollbar-width: none;
   padding: 8px 0 9px; scroll-snap-type: x proximity;
@@ -347,6 +357,23 @@ a { color: var(--link); }
   color: var(--link); font-size: 12px; font-weight: 700;
 }
 .card > .link-button { margin-top: 4px; }
+
+.update-card .ghost { width: 100%; margin-top: 10px; }
+.help-card { padding: 0; }
+.help-card summary {
+  display: flex; align-items: center; justify-content: space-between; gap: 10px;
+  padding: 14px; cursor: pointer; list-style: none;
+}
+.help-card summary::-webkit-details-marker { display: none; }
+.help-card[open] summary { border-bottom: 1px solid var(--border); }
+.help-card h2 { margin: 0; font-size: 14px; font-weight: 700; }
+.help-chevron {
+  color: var(--muted); font-size: 18px; line-height: 1;
+  transition: transform .18s ease;
+}
+.help-card[open] .help-chevron { transform: rotate(180deg); }
+.help-body { padding: 12px 14px 14px; }
+.help-body .hint { margin: 0; }
 
 .auth { display: grid; gap: 10px; justify-items: start; padding: 20px; }
 .auth-mark {

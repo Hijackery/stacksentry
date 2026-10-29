@@ -16,6 +16,7 @@ from telegram.ext import CommandHandler
 
 from stacksentry.app import MonitorBot
 from stacksentry.settings import Settings
+from stacksentry.updates import UpdateInfo
 
 ADMIN_ID = 42
 GUEST_ID = 999
@@ -182,6 +183,38 @@ async def test_apt_watcher_reports_finished_job(
     assert "Обновление системы завершено" in notified[0][1]
     assert "Setting up x-ui" in notified[0][1]
     assert bot_app.storage.list_pending_jobs() == []
+
+
+async def test_update_notification_is_sent_once_per_commit(
+    bot_app: MonitorBot, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Новый commit в main анонсируется один раз, повторный цикл молчит."""
+    info = UpdateInfo(
+        current_version="1.0.0",
+        current_sha="a" * 40,
+        remote_sha="b" * 40,
+        remote_version="1.1.0",
+        remote_date="29.10.2026 10:00 UTC",
+        remote_message="Новая версия",
+        update_available=True,
+        repo="Hijackery/stacksentry",
+    )
+    notified: list[tuple[int, str]] = []
+
+    async def fake_notify(chat_id: int, text: str, **_kwargs: object) -> bool:
+        notified.append((chat_id, text))
+        return True
+
+    monkeypatch.setattr("stacksentry.app_jobs.check_for_update", lambda: info)
+    monkeypatch.setattr(bot_app, "_notify", fake_notify)
+
+    await bot_app.job_update_check(None)  # type: ignore[arg-type]
+    await bot_app.job_update_check(None)  # type: ignore[arg-type]
+
+    assert len(notified) == 1
+    assert notified[0][0] == ADMIN_ID
+    assert "Доступно обновление" in notified[0][1]
+    assert bot_app.storage.get_meta("update_notified_sha") == info.remote_sha
 
 
 async def test_apt_watcher_shows_upgradable_packages(

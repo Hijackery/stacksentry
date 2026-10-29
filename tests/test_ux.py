@@ -159,6 +159,7 @@ async def _press(
         "command_prompt",
         "details",
         "help",
+        "version",
         "audit:denied",
         "audit:all",
         "mute:SAMPLE",
@@ -392,12 +393,19 @@ def test_maintenance_has_separate_apt_update_and_release() -> None:
         for row in ui.maintenance_menu().inline_keyboard
         for button in row
     }
-    assert "update_check" in data
     assert "ask:apt_update:" in data
     assert "ask:apt_upgrade:" in data
     assert "ask:apt_upgrade_phased:" in data
     assert "ask:dist_upgrade:" not in data  # проверка входит в запуск релиза
     assert "ask:release_upgrade:" in data
+
+
+def test_help_menu_has_update_and_version() -> None:
+    """Обновления StackSentry живут в Помощи, а не в обслуживании ОС."""
+    data = {
+        button.callback_data for row in ui.help_menu().inline_keyboard for button in row
+    }
+    assert {"update_check", "version"} <= data
 
 
 def test_help_is_a_full_presentational_manual() -> None:

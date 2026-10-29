@@ -138,3 +138,5 @@ CONFIRM_DESCRIPTIONS: dict[str, str] = {
         "конфиг и состояние сохранятся)"
     ),
 }
+
+UPDATE_NOTIFIED_KEY = "update_notified_sha"

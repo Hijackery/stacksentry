@@ -73,6 +73,29 @@ def version_menu() -> InlineKeyboardMarkup:
     )
 
 
+def help_menu(*, webapp_url: str = "") -> InlineKeyboardMarkup:
+    """Помощь как хаб: версия, обновления и Mini App в одном месте."""
+    rows: list[list[InlineKeyboardButton]] = [
+        [
+            InlineKeyboardButton(
+                "🔄 Проверить обновления", callback_data="update_check"
+            ),
+            InlineKeyboardButton("🛰 Версия", callback_data="version"),
+        ]
+    ]
+    if webapp_url:
+        rows.append(
+            [
+                InlineKeyboardButton(
+                    "📱 Открыть Mini App",
+                    web_app=WebAppInfo(url=webapp_url),
+                )
+            ]
+        )
+    rows.append([home_button()])
+    return InlineKeyboardMarkup(rows)
+
+
 def home_button() -> InlineKeyboardButton:
     """Кнопка выхода в главное меню — есть на каждом экране, где её легко потерять."""
     return InlineKeyboardButton("🏠 В меню", callback_data="home")
@@ -258,12 +281,6 @@ def maintenance_menu(*, package_manager: str | None = None) -> InlineKeyboardMar
     update_label = PKG_UPDATE_LABELS.get(pm, "🔄 Обновить список пакетов")
     upgrade_label = PKG_UPGRADE_LABELS.get(pm, "📦 Обновить систему")
     rows: list[list[InlineKeyboardButton]] = [
-        [
-            InlineKeyboardButton(
-                "🔄 Проверить обновления StackSentry",
-                callback_data="update_check",
-            )
-        ],
         [InlineKeyboardButton(update_label, callback_data="ask:apt_update:")],
         [InlineKeyboardButton(upgrade_label, callback_data="ask:apt_upgrade:")],
     ]

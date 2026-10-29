@@ -70,6 +70,9 @@ from .ui_menus import (
     confirm_menu as confirm_menu,
 )
 from .ui_menus import (
+    help_menu as help_menu,
+)
+from .ui_menus import (
     home_button as home_button,
 )
 from .ui_menus import (
