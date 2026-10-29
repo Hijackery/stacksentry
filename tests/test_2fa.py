@@ -153,6 +153,49 @@ async def test_wrong_code_deletes_message_and_keeps_one_2fa_screen(
         bot.storage.close()
 
 
+async def test_valid_code_edits_one_screen_and_does_not_send_new(
+    make_settings: Callable[..., Settings],
+) -> None:
+    bot = _bot(make_settings)
+    try:
+        bot._pending_2fa[ADMIN_ID] = {
+            "action": ACTION_RESTART_SERVICE,
+            "arg": "x-ui",
+            "data": "ask:restart_service:x-ui",
+            "expires": time.time() + 60,
+        }
+        bot._last_screen[1] = 10
+        telegram_bot = AsyncMock()
+        message = Message(
+            message_id=2,
+            date=datetime.now(tz=timezone.utc),
+            chat=Chat(id=1, type=ChatType.PRIVATE),
+            from_user=User(id=ADMIN_ID, first_name="admin", is_bot=False),
+            text=totp_code(TOTP_SECRET),
+        )
+        message.set_bot(telegram_bot)
+
+        class Ctx:
+            job_queue = None
+            user_data: dict[str, object] = {}
+
+        await bot.on_text(
+            Update(update_id=2, message=message),
+            Ctx(),  # type: ignore[arg-type]
+        )
+
+        assert telegram_bot.send_message.await_count == 0
+        assert telegram_bot.delete_message.await_count == 1
+        edits = telegram_bot.edit_message_text.await_args_list
+        assert edits
+        assert all(call.kwargs["message_id"] == 10 for call in edits)
+        texts = [call.kwargs["text"] for call in edits]
+        assert any("разблокированы" in text for text in texts)
+        assert any("Перезапустить сервис" in text for text in texts)
+    finally:
+        bot.storage.close()
+
+
 async def test_code_unlocks_and_shows_confirmation(
     make_settings: Callable[..., Settings],
 ) -> None:

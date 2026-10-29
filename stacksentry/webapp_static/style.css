@@ -143,6 +143,11 @@ a { color: var(--link); }
   color: var(--text);
   background: color-mix(in srgb, var(--accent) 14%, transparent);
 }
+.tab { display: inline-flex; align-items: center; gap: 5px; }
+.tab-dot {
+  width: 6px; height: 6px; border-radius: 50%; background: var(--warn);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--warn) 15%, transparent);
+}
 .tab.active::after {
   content: ""; position: absolute; left: 12px; right: 12px; bottom: 2px;
   height: 2px; border-radius: 2px; background: var(--accent);
@@ -394,6 +399,16 @@ a { color: var(--link); }
 }
 .card > .link-button { margin-top: 4px; }
 
+.version-card .version-actions {
+  display: flex; flex-wrap: wrap; gap: 8px; margin-top: 10px;
+}
+.version-card .version-actions > * { flex: 1 1 180px; }
+.tap-hint {
+  display: inline-block; margin-top: 7px; color: var(--link);
+  font-size: 11px; font-weight: 700;
+}
+.tap-hint-line { margin: -2px 2px 0; }
+.chevron { color: var(--muted); font-size: 18px; line-height: 1; flex: 0 0 auto; }
 .update-card .ghost, .update-card .primary { width: 100%; margin-top: 10px; }
 .update-progress {
   position: relative; height: 10px; overflow: hidden; border-radius: 999px;

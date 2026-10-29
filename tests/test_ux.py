@@ -483,22 +483,15 @@ async def test_run_rejects_command_outside_allowlist(bot_app: MonitorBot) -> Non
     assert "не в белом списке" in text
 
 
-async def test_previous_screen_is_deleted(bot_app: MonitorBot) -> None:
-    """Переход между меню заменяет прошлый экран, а не копит вереницу."""
+async def test_previous_screen_is_edited_in_place(bot_app: MonitorBot) -> None:
+    """Переход между меню правит тот же сообщение, а не шлёт новое."""
     bot = AsyncMock()
 
     class FakeMessage:
         chat_id = 7
 
-        def __init__(self) -> None:
-            self.calls = 0
-
         def get_bot(self) -> AsyncMock:
             return bot
-
-        async def reply_text(self, **_kwargs: object) -> object:
-            self.calls += 1
-            return SimpleNamespace(message_id=100 + self.calls)
 
     message = FakeMessage()
     bot_app._last_screen[7] = 50
@@ -506,12 +499,15 @@ async def test_previous_screen_is_deleted(bot_app: MonitorBot) -> None:
     first = await bot_app._reply_screen(message, "первый")  # type: ignore[arg-type]
     second = await bot_app._reply_screen(message, "второй")  # type: ignore[arg-type]
 
-    assert first is not None and first.message_id == 101
-    assert second is not None and second.message_id == 102
-    # Каждый новый экран убирает предыдущий: 50 → 101, затем 101 → 102.
-    assert [c.args for c in bot.delete_message.await_args_list] == [(7, 50), (7, 101)]
-    assert bot_app._last_screen[7] == 102
-    assert bot_app.storage.get_screen_message(7) == 102
+    assert first is None
+    assert second is None
+    assert bot.send_message.await_count == 0
+    assert bot.delete_message.await_count == 0
+    assert [
+        call.kwargs["message_id"] for call in bot.edit_message_text.await_args_list
+    ] == [50, 50]
+    assert bot_app._last_screen[7] == 50
+    assert bot_app.storage.get_screen_message(7) == 50
 
 
 async def test_screen_without_reply_passes_chat_id(bot_app: MonitorBot) -> None:
@@ -542,9 +538,10 @@ async def test_screen_survives_restart(bot_app: MonitorBot) -> None:
 
     sent = await bot_app._reply_screen(FakeMessage(), "после рестарта")  # type: ignore[arg-type]
 
-    assert sent is not None and sent.message_id == 101
-    assert [c.args for c in bot.delete_message.await_args_list] == [(7, 50)]
-    assert bot_app._last_screen[7] == 101
+    assert sent is None
+    assert bot.edit_message_text.await_args.kwargs["message_id"] == 50
+    assert bot.send_message.await_count == 0
+    assert bot_app._last_screen[7] == 50
 
 
 async def test_concurrent_screens_leave_one(bot_app: MonitorBot) -> None:
@@ -571,9 +568,10 @@ async def test_concurrent_screens_leave_one(bot_app: MonitorBot) -> None:
         bot_app._reply_screen(message, "второй"),  # type: ignore[arg-type]
     )
 
-    assert counter == 2
-    assert [c.args for c in bot.delete_message.await_args_list] == [(7, 101)]
-    assert bot_app._last_screen[7] == 102
+    assert counter == 1
+    assert bot.edit_message_text.await_args.kwargs["message_id"] == 101
+    assert bot.delete_message.await_count == 0
+    assert bot_app._last_screen[7] == 101
 
 
 async def test_stale_message_is_not_second_menu(bot_app: MonitorBot) -> None:

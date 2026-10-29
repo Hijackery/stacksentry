@@ -13,7 +13,7 @@
   const BASE_TABS = [
     ["overview", "Обзор"], ["services", "Службы"], ["panel", "Панель"],
     ["traffic", "Трафик"], ["subs", "Подписки"], ["history", "История"],
-    ["help", "Помощь"],
+    ["updates", "Обновления"], ["help", "Помощь"],
   ];
 
   function readPins() {
@@ -260,6 +260,7 @@
       <div class="metric-head"><span>${esc(label)}</span><strong>${esc(value)}</strong></div>
       <div class="meter"><i class="${tone(width)}" style="width:${width}%"></i></div>
       <p>${esc(note)}</p>
+      ${key ? '<span class="tap-hint">Подробнее →</span>' : ""}
     </div>`;
   }
 
@@ -320,6 +321,7 @@
       </div>
       ${pin}
       <span class="chip ${item.active ? "ok" : "bad"}">${esc(item.active_state || item.sub_state || "—")}</span>
+      <span class="chevron" aria-hidden="true">›</span>
     </div>`;
   }
 
@@ -355,6 +357,43 @@
     </section>`;
   }
 
+  function renderVersionCard() {
+    const info = state.update;
+    const current = state.version || (info && info.current_version) || "—";
+    let chip = "актуально";
+    let tone = "ok";
+    let detail = "Проверьте, есть ли новая версия в main.";
+    let primary = "";
+    if (state.updateRequest) {
+      const status = state.updateStatus || { stage: "Ожидает подтверждения", progress: 5 };
+      tone = "warn";
+      chip = "обновление";
+      detail = `${status.stage || "Выполняется"} · ${Math.round(Number(status.progress) || 0)}%`;
+      primary = '<button class="link-button" type="button" data-open-update>Прогресс в Помощи</button>';
+    } else if (info && info.update_available === true) {
+      tone = "warn";
+      chip = "есть обновление";
+      detail = `Доступна ${info.remote_version || info.remote_sha || "новая версия"}. Подтверждение придёт в Telegram.`;
+      primary = `<button class="primary" type="button" data-request-update ${state.updateRequesting ? "disabled" : ""}>${state.updateRequesting ? "Запрашиваю…" : "⬆️ Обновить через бота"}</button>`;
+    } else if (info && info.error) {
+      tone = "bad";
+      chip = "ошибка";
+      detail = info.error;
+    } else if (state.updateLoading) {
+      tone = "warn";
+      chip = "проверяю";
+      detail = "Сравниваю версию с main.";
+    }
+    return `<section class="card version-card" id="overview-version">
+      <div class="card-head"><h2>StackSentry ${esc(current)}</h2><span class="chip ${tone}">${esc(chip)}</span></div>
+      <p class="hint">${esc(detail)}</p>
+      <div class="version-actions">
+        <button class="ghost" type="button" data-check-update ${state.updateLoading ? "disabled" : ""}>${state.updateLoading ? "Проверяю…" : "Проверить обновления"}</button>
+        ${primary}
+      </div>
+    </section>`;
+  }
+
   function renderOverview() {
     const s = state.snapshot;
     const verdict = health();
@@ -382,12 +421,14 @@
       : "";
     return [
       renderHero(verdict.tone, verdict.title, heroText),
+      renderVersionCard(),
       `<div class="stat-grid">${metrics.join("")}</div>`,
       `<div class="quick-grid">
         ${renderQuick("Клиенты", fmtNumber(s.active_clients))}
         ${renderQuick("Трафик", fmtBytes(s.total_used_bytes))}
         ${renderQuick("Службы", `${activeServices}/${services.length}`)}
       </div>`,
+      '<p class="hint tap-hint-line">Плитки, службы и проверки открываются нажатием.</p>',
       `<div class="dashboard-bar"><span class="hint">Дашборд</span><button class="link-button" type="button" data-dashboard-toggle>${state.dashboardOpen ? "Готово" : "⚙️ Настроить"}</button></div>`,
       dashboardPanel,
       settings.checks ? renderNotices(s) : "",
@@ -491,10 +532,28 @@
       <button class="link-button" type="button" data-update-help>Подробнее</button>`;
   }
 
+  function updateTabBadge() {
+    const tab = $("tab-updates");
+    if (!tab) return;
+    const has = state.update && state.update.update_available === true;
+    const dot = tab.querySelector(".tab-dot");
+    if (has && !dot) {
+      const badge = document.createElement("span");
+      badge.className = "tab-dot";
+      badge.setAttribute("aria-label", "Есть обновление");
+      tab.appendChild(badge);
+    } else if (!has && dot) {
+      dot.remove();
+    }
+  }
+
   function refreshUpdateCard() {
     const card = $("update-card");
     if (card) card.outerHTML = renderUpdateCard();
+    const overview = $("overview-version");
+    if (overview) overview.outerHTML = renderVersionCard();
     refreshUpdateBanner();
+    updateTabBadge();
   }
 
   async function loadUpdate(force = false, refresh = false) {
@@ -568,6 +627,17 @@
       state.updateTimer = setTimeout(poll, 2000);
     };
     poll();
+  }
+
+  function renderUpdatesPage() {
+    const current = state.version || (state.update && state.update.current_version) || "—";
+    if (!state.update && !state.updateLoading) setTimeout(() => loadUpdate(false), 0);
+    return renderHero("ok", "Обновления StackSentry", `Установленная версия: ${current}`) +
+      renderUpdateCard() +
+      `<section class="card">
+        <div class="card-head"><h2>Как это работает</h2></div>
+        <p class="hint">Webapp только проверяет версию и создаёт запрос. Само обновление подтверждается в Telegram, при 2FA нужен свежий код. После подтверждения здесь появятся этапы и прогресс.</p>
+      </section>`;
   }
 
   function renderHelp() {
@@ -744,7 +814,7 @@
       ${total > 0 ? `<div class="meter"><i class="${tone(percent)}" style="width:${percent}%"></i></div>` : ""}
       <div class="sub-foot">
         <span>${fmtBytes(used)}${total > 0 ? ` / ${fmtBytes(total)}` : " · без лимита"}</span>
-        <span>${esc(expiryLabel(item))}</span>
+        <span>${esc(expiryLabel(item))} <span class="chevron" aria-hidden="true">›</span></span>
       </div>
     </div>`;
   }
@@ -1177,6 +1247,7 @@
     else if (state.active === "panel") view.innerHTML = renderPanel();
     else if (state.active === "traffic") view.innerHTML = renderTraffic();
     else if (state.active === "subs") renderSubs();
+    else if (state.active === "updates") view.innerHTML = renderUpdatesPage();
     else if (state.active === "help") view.innerHTML = renderHelp();
     else if (state.active === "history") {
       view.innerHTML = renderHistoryShell();
@@ -1187,9 +1258,12 @@
   function renderTabs() {
     $("tabs").innerHTML = state.tabs.map(([key, label]) => {
       const active = key === state.active;
+      const badge = key === "updates" && state.update && state.update.update_available === true
+        ? '<span class="tab-dot" aria-label="Есть обновление"></span>'
+        : "";
       return `<button id="tab-${key}" class="tab${active ? " active" : ""}" type="button"
         role="tab" aria-selected="${active}" aria-controls="${key === "terminal" ? "terminal-view" : "view"}"
-        tabindex="${active ? 0 : -1}" data-tab="${key}">${esc(label)}</button>`;
+        tabindex="${active ? 0 : -1}" data-tab="${key}">${esc(label)}${badge}</button>`;
     }).join("");
     const current = $(`tab-${state.active}`);
     if (current) current.scrollIntoView({ block: "nearest", inline: "nearest" });
@@ -1511,6 +1585,10 @@
       const value = Number(hoursButton.dataset.metricHours);
       state.metricHours = [24, 168, 720].includes(value) ? value : 24;
       render();
+      return;
+    }
+    if (event.target.closest("[data-open-update]")) {
+      switchTab("help");
       return;
     }
     if (event.target.closest("[data-dashboard-toggle]")) {

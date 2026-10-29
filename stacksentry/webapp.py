@@ -223,6 +223,9 @@ def create_app(
             )
         if request.url.path.startswith("/api/"):
             response.headers["Cache-Control"] = "no-store"
+        elif request.url.path in {"/", "/index.html", "/app.js", "/style.css"}:
+            # После обновления браузер не должен показывать старый интерфейс.
+            response.headers["Cache-Control"] = "no-cache"
         return response
 
     def current_user(request: Request) -> int:

@@ -243,6 +243,9 @@ def test_metrics_and_health_endpoints(
         storage=storage,
     )
     client = TestClient(app)
+    index = client.get("/")
+    assert index.status_code == 200
+    assert index.headers["Cache-Control"] == "no-cache"
     metrics = client.get("/metrics")
     assert metrics.status_code == 200
     assert "stacksentry_up 1" in metrics.text
@@ -402,6 +405,8 @@ def test_mini_app_has_help_tab() -> None:
         encoding="utf-8"
     )
     assert '["help", "Помощь"]' in js
+    assert '["updates", "Обновления"]' in js
+    assert "function renderUpdatesPage()" in js
     assert "function renderHelp()" in js
     assert 'state.active === "help"' in js
     assert "Если 2FA выключена, TOTP не запрашивается нигде" in js
@@ -417,6 +422,7 @@ def test_mini_app_has_help_tab() -> None:
     assert "data-request-update" in js
     assert "/api/update/status" in js
     assert "update-progress" in js
+    assert "data-open-update" in js
 
 
 def test_cookie_flags(make_settings: Callable[..., Settings], storage: Storage) -> None:

@@ -418,12 +418,21 @@ class CommandMixin(BotBase):
         reply_to: Message | None = None,
         bot: Any = None,
     ) -> Message | None:
-        """Показывает экран, оставляя в чате только одно сообщение бота."""
+        """Показывает экран в том же сообщении, не создавая новое окно."""
         if not chat_id:
             return None
         async with self._screen_lock(chat_id):
             previous = await self._tracked_screen(chat_id)
             target = bot or self.app.bot
+            # Главное правило: сначала правим существующий экран. Даже если
+            # Telegram не даёт удалять старые сообщения, новые не появляются.
+            if previous and await self._edit_message(
+                chat_id, previous, text, markup=markup, bot=target
+            ):
+                return None
+            if previous:
+                with suppress(TelegramError):
+                    await target.delete_message(chat_id, previous)
             sender = (
                 reply_to.reply_text if reply_to is not None else target.send_message
             )
@@ -445,21 +454,8 @@ class CommandMixin(BotBase):
             if sent is None:
                 return None
             mid = getattr(sent, "message_id", None)
-            if not isinstance(mid, int):
-                return cast(Message | None, sent)
-            await self._remember_screen(chat_id, mid)
-            if previous and previous != mid:
-                delete_bot = reply_to.get_bot() if reply_to is not None else target
-                try:
-                    await delete_bot.delete_message(chat_id, previous)
-                except TelegramError as exc:
-                    logger.debug("Не удалось удалить прошлый экран: %s", exc)
-                    # Если удалить старый нельзя, возвращаем его на место:
-                    # лучше одно сообщение с новым текстом, чем два меню.
-                    with suppress(TelegramError):
-                        await bot.delete_message(chat_id, mid)
-                    if await self._edit_message(chat_id, previous, text, markup=markup):
-                        return cast(Message | None, sent)
+            if isinstance(mid, int):
+                await self._remember_screen(chat_id, mid)
             return cast(Message | None, sent)
 
     async def _replace_or_notify(
@@ -484,7 +480,11 @@ class CommandMixin(BotBase):
     ) -> Message | None:
         """Показывает новый экран и убирает предыдущий, чтобы меню не копились."""
         return await self._show_screen(
-            message.chat_id, text, markup=markup, reply_to=message
+            message.chat_id,
+            text,
+            markup=markup,
+            reply_to=message,
+            bot=message.get_bot(),
         )
 
     async def _show_run_log(
