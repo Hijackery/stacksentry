@@ -13,6 +13,7 @@ from telegram.ext import ContextTypes
 
 from . import ui
 from .actions import ACTION_RELEASE_UPGRADE, APT_KINDS, ActionError
+from .alerts import Finding, Rule
 from .app_base import BotBase
 from .app_constants import (
     ACTION_APT_UPDATE,
@@ -38,6 +39,7 @@ from .app_utils import (
     _safe_edit,
     _split_alerts,
 )
+from .models import Severity
 from .updates import check_for_update
 
 logger = logging.getLogger(__name__)
@@ -497,6 +499,100 @@ class JobsMixin(BotBase):
                 self.storage.set_meta, UPDATE_NOTIFIED_KEY, info.remote_sha
             )
 
+    def _quiet_hours(self) -> bool:
+        start_text = self.settings.alert_quiet_start
+        end_text = self.settings.alert_quiet_end
+        if not start_text or not end_text:
+            return False
+        try:
+            start_h, start_m = (int(part) for part in start_text.split(":"))
+            end_h, end_m = (int(part) for part in end_text.split(":"))
+        except ValueError:
+            return False
+        now = time.localtime()
+        moment = now.tm_hour * 60 + now.tm_min
+        start = start_h * 60 + start_m
+        end = end_h * 60 + end_m
+        if start == end:
+            return False
+        if start < end:
+            return start <= moment < end
+        return moment >= start or moment < end
+
+    async def _flush_alert_outbox(self) -> None:
+        """Отправляет накопленные алерты и подтверждает их только после успеха."""
+        rows = await asyncio.to_thread(self.storage.pending_alerts)
+        if not rows:
+            return
+        quiet = self._quiet_hours()
+        routes: dict[str, tuple[tuple[int, int | None], ...]] = {}
+        groups: dict[tuple[tuple[int, int | None], ...], list[sqlite3.Row]] = {}
+        for row in rows:
+            severity = str(row["severity"])
+            # Ночью копим предупреждения и отправляем дайджестом утром.
+            if quiet and severity != "critical":
+                continue
+            if severity not in routes:
+                routes[severity] = tuple(await self._alert_targets(severity))
+            route = routes[severity]
+            if not route:
+                continue
+            groups.setdefault(route, []).append(row)
+        if not groups:
+            return
+        for route, group_rows in groups.items():
+            findings: list[Finding] = []
+            for row in group_rows:
+                try:
+                    rule = Rule(str(row["rule"]))
+                except ValueError:
+                    rule = Rule.panel
+                findings.append(
+                    Finding(
+                        rule,
+                        Severity(str(row["severity"])),
+                        str(row["title"]),
+                        str(row["detail"]),
+                        key=str(row["state_key"]),
+                        resolve=str(row["resolve"]),
+                    )
+                )
+            chunks = _split_alerts(findings)
+            markup = ui.alert_menu(
+                _alert_actions(findings, self.settings),
+                mute_key=findings[0].state_key,
+            )
+            delivered = True
+            for chat_id, thread_id in route:
+                for index, chunk in enumerate(chunks):
+                    delivered = (
+                        await self._notify(
+                            chat_id,
+                            chunk,
+                            markup=markup if index == 0 else None,
+                            thread_id=thread_id,
+                        )
+                        and delivered
+                    )
+            if delivered:
+                now = time.time()
+                keys = {str(row["state_key"]) for row in group_rows}
+                for row in group_rows:
+                    await asyncio.to_thread(
+                        self.storage.mark_alert_sent_row, int(row["id"]), now
+                    )
+                await asyncio.to_thread(self.engine.mark_sent, list(keys), at=now)
+                continue
+            retry_at = time.time() + 30
+            for row in group_rows:
+                await asyncio.to_thread(
+                    self.storage.retry_alert,
+                    int(row["id"]),
+                    "Telegram не принял сообщение",
+                    retry_at,
+                )
+            logger.warning("Алерты не доставлены, outbox повторит отправку")
+
     async def job_check(self, _context: ContextTypes.DEFAULT_TYPE) -> None:
         try:
             snapshot = await self.monitor.snapshot()
@@ -525,32 +621,23 @@ class JobsMixin(BotBase):
         except sqlite3.Error as exc:
             logger.warning("Не удалось обновить состояние алертов: %s", exc)
             return
-        if not outbox:
-            return
-
-        chunks = _split_alerts(outbox)
-        markup = ui.alert_menu(
-            _alert_actions(outbox, self.settings), mute_key=outbox[0].state_key
-        )
-        delivered = True
-        for chat_id in await self._alert_targets():
-            for index, chunk in enumerate(chunks):
-                delivered = (
-                    await self._notify(
-                        chat_id, chunk, markup=markup if index == 0 else None
-                    )
-                    and delivered
-                )
-
-        if delivered:
+        for finding in outbox:
             await asyncio.to_thread(
-                self.engine.mark_sent, [finding.state_key for finding in outbox]
+                self.storage.enqueue_alert,
+                state_key=finding.state_key,
+                rule=finding.rule.value,
+                severity=finding.severity.value,
+                title=finding.title,
+                detail=finding.detail,
+                resolve=finding.resolve,
             )
-        else:
-            logger.warning("Часть алертов не доставлена — повторим на следующем цикле")
+        await self._flush_alert_outbox()
 
     async def job_prune(self, _context: ContextTypes.DEFAULT_TYPE) -> None:
         await asyncio.to_thread(
             self.storage.prune_samples, time.time() - SAMPLE_RETENTION_DAYS * 86400
         )
         await asyncio.to_thread(self.storage.prune_audit, time.time() - 90 * 86400)
+        await asyncio.to_thread(
+            self.storage.prune_alert_outbox, time.time() - 30 * 86400
+        )

@@ -232,6 +232,7 @@ class MonitorBot(CommandMixin, JobsMixin):
         )
         await self._verify_after_reboot()
         await self._resume_apt_watches()
+        await self._flush_alert_outbox()
         if self.settings.webapp_enabled and self.settings.webapp_public_origin:
             try:
                 await self.app.bot.set_chat_menu_button(
@@ -286,11 +287,16 @@ class MonitorBot(CommandMixin, JobsMixin):
         text: str,
         *,
         markup: InlineKeyboardMarkup | None = None,
+        thread_id: int | None = None,
     ) -> bool:
         chunks = _split(text, 3500)
         # В личном чате администратора весь вывод живёт в одном сообщении:
         # алерты и отчёты не должны оставлять после себя вереницу меню.
-        if chat_id in self.settings.admin_ids and len(chunks) == 1:
+        if (
+            chat_id in self.settings.admin_ids
+            and thread_id is None
+            and len(chunks) == 1
+        ):
             return bool(await self._show_screen(chat_id, text, markup=markup))
         delivered = True
         for chunk in chunks:
@@ -301,6 +307,7 @@ class MonitorBot(CommandMixin, JobsMixin):
                     text=chunk,
                     parse_mode=ParseMode.HTML,
                     reply_markup=markup,
+                    **({"message_thread_id": thread_id} if thread_id else {}),
                 )
             except TelegramError as exc:
                 logger.error(
@@ -311,10 +318,27 @@ class MonitorBot(CommandMixin, JobsMixin):
                 delivered = False
         return delivered
 
-    async def _alert_targets(self) -> list[int]:
+    async def _alert_targets(self, severity: str = "") -> list[tuple[int, int | None]]:
+        """Маршрут алерта: отдельный чат/topic по severity или общий fallback."""
+        if severity == "critical" and self.settings.alert_critical_chat_id:
+            return [
+                (
+                    self.settings.alert_critical_chat_id,
+                    self.settings.alert_critical_topic_id,
+                )
+            ]
+        if severity in {"warning", "unknown", "ok"} and (
+            self.settings.alert_warning_chat_id
+        ):
+            return [
+                (
+                    self.settings.alert_warning_chat_id,
+                    self.settings.alert_warning_topic_id,
+                )
+            ]
         if self.settings.alert_chat_id:
-            return [self.settings.alert_chat_id]
-        return list(self.settings.admin_ids)
+            return [(self.settings.alert_chat_id, None)]
+        return [(chat_id, None) for chat_id in self.settings.admin_ids]
 
     async def on_error(
         self, update: object, context: ContextTypes.DEFAULT_TYPE

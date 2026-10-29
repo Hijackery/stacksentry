@@ -7,7 +7,11 @@ AttributeError, не доходя до сети.
 
 from __future__ import annotations
 
+import asyncio
+import time
 from collections.abc import AsyncIterator, Callable
+from dataclasses import replace
+from types import SimpleNamespace
 from unittest.mock import AsyncMock
 
 import pytest
@@ -183,6 +187,82 @@ async def test_apt_watcher_reports_finished_job(
     assert "Обновление системы завершено" in notified[0][1]
     assert "Setting up x-ui" in notified[0][1]
     assert bot_app.storage.list_pending_jobs() == []
+
+
+async def test_alert_outbox_retries_and_is_deduplicated(
+    bot_app: MonitorBot, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Один алерт не дублируется, а после сбоя остаётся в очереди."""
+    await asyncio.to_thread(
+        bot_app.storage.set_alert_state, "cpu", "critical", changed_at=100.0
+    )
+    first = bot_app.storage.enqueue_alert(
+        state_key="cpu",
+        rule="cpu",
+        severity="critical",
+        title="CPU",
+        detail="96%",
+    )
+    duplicate = bot_app.storage.enqueue_alert(
+        state_key="cpu",
+        rule="cpu",
+        severity="critical",
+        title="CPU",
+        detail="96%",
+    )
+    assert first > 0
+    assert duplicate == 0
+    assert len(bot_app.storage.pending_alerts()) == 1
+
+    async def fail_notify(*_args: object, **_kwargs: object) -> bool:
+        return False
+
+    monkeypatch.setattr(bot_app, "_notify", fail_notify)
+    await bot_app._flush_alert_outbox()
+    assert len(bot_app.storage.pending_alerts(now=time.time() + 60)) == 1
+
+    async def ok_notify(*_args: object, **_kwargs: object) -> bool:
+        return True
+
+    monkeypatch.setattr(bot_app, "_notify", ok_notify)
+    await bot_app._flush_alert_outbox()
+    assert bot_app.storage.pending_alerts() == []
+
+
+async def test_alert_routes_by_severity_and_topic(bot_app: MonitorBot) -> None:
+    bot_app.settings = replace(
+        bot_app.settings,
+        alert_critical_chat_id=-1001,
+        alert_critical_topic_id=7,
+        alert_warning_chat_id=-1002,
+        alert_warning_topic_id=8,
+    )
+
+    assert await bot_app._alert_targets("critical") == [(-1001, 7)]
+    assert await bot_app._alert_targets("warning") == [(-1002, 8)]
+    assert await bot_app._alert_targets("ok") == [(-1002, 8)]
+
+
+def test_quiet_hours_wrap_midnight(
+    bot_app: MonitorBot, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    bot_app.settings = replace(
+        bot_app.settings,
+        alert_quiet_start="23:00",
+        alert_quiet_end="08:00",
+    )
+
+    monkeypatch.setattr(
+        "stacksentry.app_jobs.time.localtime",
+        lambda: SimpleNamespace(tm_hour=23, tm_min=30),
+    )
+    assert bot_app._quiet_hours() is True
+
+    monkeypatch.setattr(
+        "stacksentry.app_jobs.time.localtime",
+        lambda: SimpleNamespace(tm_hour=12, tm_min=0),
+    )
+    assert bot_app._quiet_hours() is False
 
 
 async def test_update_notification_is_sent_once_per_commit(

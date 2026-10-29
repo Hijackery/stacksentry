@@ -86,6 +86,10 @@ def snapshot(
 def engine(
     make_settings: Callable[..., Settings], storage: Storage, **overrides: object
 ) -> AlertEngine:
+    # Большинство тестов проверяют логику порогов, а не дебаунс: по умолчанию
+    # подтверждаем переход с первого замера. Отдельные тесты задают 2.
+    overrides.setdefault("alert_confirm_checks", 1)
+    overrides.setdefault("alert_recovery_checks", 1)
     return AlertEngine(make_settings(**overrides), storage)
 
 
@@ -94,6 +98,26 @@ def test_healthy_snapshot_produces_nothing(
 ) -> None:
     alerts = engine(make_settings, storage)
     assert alerts.evaluate(snapshot(metrics(10.0))) == []
+
+
+def test_transient_spike_is_ignored_until_confirmed(
+    make_settings: Callable[..., Settings], storage: Storage
+) -> None:
+    """Одиночный всплеск не должен выглядеть как авария."""
+    alerts = engine(
+        make_settings,
+        storage,
+        alert_confirm_checks=2,
+        alert_recovery_checks=2,
+    )
+
+    assert alerts.update(alerts.evaluate(snapshot(metrics(96.0)))) == []
+    assert alerts.update(alerts.evaluate(snapshot(metrics(10.0)))) == []
+    assert storage.get_alert_state("cpu") is None
+
+    assert alerts.update(alerts.evaluate(snapshot(metrics(96.0)))) == []
+    second = alerts.update(alerts.evaluate(snapshot(metrics(96.0))))
+    assert [finding.key for finding in second] == ["cpu"]
 
 
 def test_cpu_threshold_maps_to_severity(

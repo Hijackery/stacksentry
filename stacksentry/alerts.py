@@ -273,7 +273,11 @@ class AlertEngine:
         now = time.time()
         self.storage.prune_mutes()
         every = {finding.state_key: finding for finding in findings}
-        known = every.keys() | set(self.storage.all_alert_keys())
+        known = (
+            every.keys()
+            | set(self.storage.all_alert_keys())
+            | set(self.storage.all_alert_candidate_keys())
+        )
         # Заглушенные («знаю, до утра») не участвуют вообще: иначе снятый мьют
         # прилетел бы как «восстановлено», хотя проблема не уходила.
         muted = {key for key in known if self.storage.is_muted(key)}
@@ -291,6 +295,7 @@ class AlertEngine:
             new_state = finding.severity if finding else Severity.ok
 
             if new_state is old_state:
+                self.storage.clear_alert_candidate(key)
                 if new_state is Severity.ok or finding is None:
                     continue
                 last = _as_float(previous["notified_at"] if previous else None)
@@ -299,6 +304,31 @@ class AlertEngine:
                 outbox.append(finding)
                 continue
 
+            # Переход подтверждаем несколькими замерами подряд: одиночный
+            # всплеск CPU, таймаут панели или короткий рестарт службы не
+            # должны выглядеть как авария. Восстановление тоже дебаунсим,
+            # чтобы не было качелей «упало/восстановилось».
+            required = (
+                self.settings.alert_confirm_checks
+                if new_state is not Severity.ok
+                else self.settings.alert_recovery_checks
+            )
+            candidate = self.storage.get_alert_candidate(key)
+            if candidate is None or candidate["state"] != new_state.value:
+                seen = 1
+                first_seen = now
+            else:
+                seen = int(candidate["seen"]) + 1
+                first_seen = float(candidate["first_seen"])
+            if seen < required:
+                self.storage.set_alert_candidate(
+                    key,
+                    new_state.value,
+                    seen=seen,
+                    first_seen=first_seen,
+                )
+                continue
+            self.storage.clear_alert_candidate(key)
             self.storage.set_alert_state(key, new_state.value, changed_at=now)
             if new_state is Severity.ok:
                 outbox.append(

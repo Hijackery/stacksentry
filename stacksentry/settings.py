@@ -163,6 +163,8 @@ class Settings:
     alert_hysteresis: float
     expiring_soon_days: int
     disk_path: str
+    alert_confirm_checks: int = 2
+    alert_recovery_checks: int = 2
 
     panel_type: str = "3x-ui"
     panel_username: str = ""
@@ -188,6 +190,15 @@ class Settings:
     #: Фоновая проверка новых версий StackSentry и уведомление админов.
     update_notify: bool = True
     update_check_interval: int = 21600
+
+    #: Маршрутизация по severity. Пусто: ALERT_CHAT_ID или все админы.
+    alert_critical_chat_id: int | None = None
+    alert_critical_topic_id: int | None = None
+    alert_warning_chat_id: int | None = None
+    alert_warning_topic_id: int | None = None
+    #: Тихие часы HH:MM, например 23:00 и 08:00. Критические алерты идут всегда.
+    alert_quiet_start: str = ""
+    alert_quiet_end: str = ""
 
     extra: dict[str, str] = field(default_factory=dict, repr=False)
 
@@ -276,6 +287,8 @@ def _build_settings() -> Settings:
         disk_crit=env_float("DISK_CRIT", 93.0),
         alert_cooldown=env_int("ALERT_COOLDOWN", 1800, minimum=60),
         alert_hysteresis=env_float("ALERT_HYSTERESIS", 5.0),
+        alert_confirm_checks=env_int("ALERT_CONFIRM_CHECKS", 2, minimum=1),
+        alert_recovery_checks=env_int("ALERT_RECOVERY_CHECKS", 2, minimum=1),
         expiring_soon_days=env_int("EXPIRING_SOON_DAYS", 3, minimum=0),
         disk_path=env_str("DISK_PATH", "/"),
         totp_secret=env_str("TOTP_SECRET").strip().upper().replace(" ", ""),
@@ -292,6 +305,12 @@ def _build_settings() -> Settings:
         webapp_terminal_origin=env_str("WEBAPP_TERMINAL_ORIGIN").strip().rstrip("/"),
         update_notify=env_bool("UPDATE_NOTIFY", True),
         update_check_interval=env_int("UPDATE_CHECK_INTERVAL", 21600, minimum=3600),
+        alert_critical_chat_id=env_int("ALERT_CRITICAL_CHAT_ID", 0) or None,
+        alert_critical_topic_id=env_int("ALERT_CRITICAL_TOPIC_ID", 0) or None,
+        alert_warning_chat_id=env_int("ALERT_WARNING_CHAT_ID", 0) or None,
+        alert_warning_topic_id=env_int("ALERT_WARNING_TOPIC_ID", 0) or None,
+        alert_quiet_start=env_str("ALERT_QUIET_START").strip(),
+        alert_quiet_end=env_str("ALERT_QUIET_END").strip(),
     )
 
     problems = _validate(settings)
@@ -532,4 +551,12 @@ def _validate(settings: Settings) -> list[str]:
         problems.append("MEM_WARN должен быть меньше MEM_CRIT")
     if settings.disk_warn >= settings.disk_crit:
         problems.append("DISK_WARN должен быть меньше DISK_CRIT")
+    for name, value in (
+        ("ALERT_QUIET_START", settings.alert_quiet_start),
+        ("ALERT_QUIET_END", settings.alert_quiet_end),
+    ):
+        if value and not re.fullmatch(r"([01]\d|2[0-3]):[0-5]\d", value):
+            problems.append(f"{name}={value!r}: ожидается время HH:MM")
+    if bool(settings.alert_quiet_start) != bool(settings.alert_quiet_end):
+        problems.append("ALERT_QUIET_START и ALERT_QUIET_END задаются вместе")
     return problems

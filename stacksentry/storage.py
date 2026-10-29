@@ -84,6 +84,33 @@ CREATE TABLE IF NOT EXISTS bot_meta (
     key TEXT PRIMARY KEY,
     value TEXT NOT NULL
 );
+
+CREATE TABLE IF NOT EXISTS alert_outbox (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    dedupe_key TEXT NOT NULL UNIQUE,
+    state_key TEXT NOT NULL,
+    rule TEXT NOT NULL,
+    severity TEXT NOT NULL,
+    title TEXT NOT NULL,
+    detail TEXT NOT NULL,
+    resolve TEXT NOT NULL DEFAULT '',
+    created_at REAL NOT NULL,
+    attempts INTEGER NOT NULL DEFAULT 0,
+    next_attempt REAL NOT NULL,
+    sent_at REAL,
+    last_error TEXT
+);
+
+CREATE INDEX IF NOT EXISTS idx_alert_outbox_pending
+    ON alert_outbox(sent_at, next_attempt);
+
+CREATE TABLE IF NOT EXISTS alert_candidates (
+    key TEXT PRIMARY KEY,
+    state TEXT NOT NULL,
+    seen INTEGER NOT NULL,
+    first_seen REAL NOT NULL,
+    updated_at REAL NOT NULL
+);
 """
 
 
@@ -337,6 +364,119 @@ class Storage:
         with self._lock:
             self.conn.execute(
                 "DELETE FROM pending_jobs WHERE created_at < ?", (older_than,)
+            )
+
+    # ------------------------------------------------------ alert candidates
+
+    def get_alert_candidate(self, key: str) -> sqlite3.Row | None:
+        with self._lock:
+            row: sqlite3.Row | None = self.conn.execute(
+                "SELECT * FROM alert_candidates WHERE key = ?", (key,)
+            ).fetchone()
+            return row
+
+    def set_alert_candidate(
+        self,
+        key: str,
+        state: str,
+        *,
+        seen: int,
+        first_seen: float,
+    ) -> None:
+        with self._lock:
+            self.conn.execute(
+                "INSERT INTO alert_candidates "
+                "(key, state, seen, first_seen, updated_at) "
+                "VALUES (?, ?, ?, ?, ?) "
+                "ON CONFLICT(key) DO UPDATE SET "
+                "state = excluded.state, seen = excluded.seen, "
+                "first_seen = excluded.first_seen, updated_at = excluded.updated_at",
+                (key, state, seen, first_seen, time.time()),
+            )
+
+    def clear_alert_candidate(self, key: str) -> None:
+        with self._lock:
+            self.conn.execute("DELETE FROM alert_candidates WHERE key = ?", (key,))
+
+    def all_alert_candidate_keys(self) -> list[str]:
+        with self._lock:
+            return [
+                row["key"]
+                for row in self.conn.execute(
+                    "SELECT key FROM alert_candidates"
+                ).fetchall()
+            ]
+
+    # ----------------------------------------------------------- alert outbox
+
+    def enqueue_alert(
+        self,
+        *,
+        state_key: str,
+        rule: str,
+        severity: str,
+        title: str,
+        detail: str,
+        resolve: str = "",
+    ) -> int:
+        """Кладёт алерт в outbox; повтор того же события не создаёт дубль."""
+        with self._lock:
+            row = self.conn.execute(
+                "SELECT changed_at, notified_at FROM alert_state WHERE key = ?",
+                (state_key,),
+            ).fetchone()
+            changed = float(row["changed_at"]) if row else 0.0
+            notified = float(row["notified_at"] or 0) if row else 0.0
+            dedupe = f"{state_key}:{severity}:{changed}:{notified}"
+            now = time.time()
+            cur = self.conn.execute(
+                "INSERT OR IGNORE INTO alert_outbox "
+                "(dedupe_key, state_key, rule, severity, title, detail, resolve, "
+                "created_at, next_attempt) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                (
+                    dedupe,
+                    state_key,
+                    rule,
+                    severity,
+                    title,
+                    detail,
+                    resolve,
+                    now,
+                    now,
+                ),
+            )
+            return int(cur.lastrowid or 0) if cur.rowcount else 0
+
+    def pending_alerts(self, now: float | None = None) -> list[sqlite3.Row]:
+        moment = time.time() if now is None else now
+        with self._lock:
+            return self.conn.execute(
+                "SELECT * FROM alert_outbox "
+                "WHERE sent_at IS NULL AND next_attempt <= ? ORDER BY id",
+                (moment,),
+            ).fetchall()
+
+    def mark_alert_sent_row(self, row_id: int, at: float | None = None) -> None:
+        moment = time.time() if at is None else at
+        with self._lock:
+            self.conn.execute(
+                "UPDATE alert_outbox SET sent_at = ?, last_error = NULL WHERE id = ?",
+                (moment, row_id),
+            )
+
+    def retry_alert(self, row_id: int, error: str, next_attempt: float) -> None:
+        with self._lock:
+            self.conn.execute(
+                "UPDATE alert_outbox SET attempts = attempts + 1, "
+                "next_attempt = ?, last_error = ? WHERE id = ?",
+                (next_attempt, error[:500], row_id),
+            )
+
+    def prune_alert_outbox(self, older_than: float) -> None:
+        with self._lock:
+            self.conn.execute(
+                "DELETE FROM alert_outbox WHERE sent_at IS NOT NULL AND sent_at < ?",
+                (older_than,),
             )
 
     # --------------------------------------------------------------- bot meta

@@ -613,7 +613,15 @@ over the file.
 | `DISK_WARN` | disk warning threshold, % |
 | `DISK_CRIT` | disk critical threshold, % |
 | `ALERT_HYSTERESIS` | how far a metric must recover before an alert clears, % |
+| `ALERT_CONFIRM_CHECKS` | consecutive checks needed to confirm an alert |
+| `ALERT_RECOVERY_CHECKS` | consecutive checks needed to confirm recovery |
 | `ALERT_COOLDOWN` | how often an active alert repeats, seconds |
+| `ALERT_CRITICAL_CHAT_ID` | separate chat for critical |
+| `ALERT_CRITICAL_TOPIC_ID` | topic in the critical chat |
+| `ALERT_WARNING_CHAT_ID` | separate chat for warning |
+| `ALERT_WARNING_TOPIC_ID` | topic in the warning chat |
+| `ALERT_QUIET_START` | quiet hours start, `HH:MM` |
+| `ALERT_QUIET_END` | quiet hours end, `HH:MM` |
 | `EXPIRING_SOON_DAYS` | days before expiry when a subscription is “soon” |
 | `CHECK_INTERVAL` | background check period, seconds (minimum 15) |
 | `UPDATE_NOTIFY` | `1`: notify admins about a new StackSentry commit in main |
