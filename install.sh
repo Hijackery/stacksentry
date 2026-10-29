@@ -585,7 +585,8 @@ uninstall() {
         "/etc/systemd/system/stacksentry-apt-update.service" \
         "/etc/systemd/system/stacksentry-apt-upgrade.service" \
         "/etc/systemd/system/stacksentry-apt-phased.service" \
-        "/etc/systemd/system/stacksentry-release-upgrade.service"
+        "/etc/systemd/system/stacksentry-release-upgrade.service" \
+        "/etc/systemd/system/stacksentry-self-update.service"
     if command -v systemctl >/dev/null 2>&1; then
         systemctl daemon-reload >/dev/null 2>&1 || true
     fi
@@ -866,8 +867,15 @@ ok "Python $("$PYTHON_BIN" -c 'import platform; print(platform.python_version())
 
 SOURCE_DIR=""
 for candidate in "$PWD" "$(dirname "$(readlink -f "$0" 2>/dev/null || echo "$0")")"; do
+    candidate="$(readlink -f "$candidate" 2>/dev/null || printf '%s' "$candidate")"
+    # При --update нельзя брать исходники из $PREFIX: там лежит старый код,
+    # и «обновление» перезаписывало только commit в метаданных.
+    if [ "$UPDATE" -eq 1 ] \
+        && [ "$candidate" = "$(readlink -f "$PREFIX" 2>/dev/null || printf '%s' "$PREFIX")" ]; then
+        continue
+    fi
     if [ -f "$candidate/stacksentry/app.py" ]; then
-        SOURCE_DIR="$(readlink -f "$candidate")"
+        SOURCE_DIR="$candidate"
         break
     fi
 done
@@ -2024,7 +2032,8 @@ if [ "$INIT" = systemd ]; then
         "stacksentry-apt-update:_apt_update_worker:package index update" \
         "stacksentry-apt-upgrade:_apt_worker:package upgrade" \
         "stacksentry-apt-phased:_apt_worker_phased:APT phased upgrade" \
-        "stacksentry-release-upgrade:_release_upgrade_worker:do-release-upgrade"; do
+        "stacksentry-release-upgrade:_release_upgrade_worker:do-release-upgrade" \
+        "stacksentry-self-update:_self_update_worker:StackSentry self-update"; do
         _apt_unit="${_pair%%:*}"
         _rest="${_pair#*:}"
         _apt_worker="${_rest%%:*}"

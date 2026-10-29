@@ -6,14 +6,14 @@ from pathlib import Path
 
 import pytest
 
-from stacksentry import updates
+from stacksentry import __version__, updates
 from stacksentry.ui import render_update, update_menu
 
 
 def _install_file(tmp_path: Path, *, sha: str = "a" * 40) -> Path:
     path = tmp_path / ".stacksentry-install"
     path.write_text(
-        "VERSION=1.0.0\n"
+        f"VERSION={__version__}\n"
         "REF=main\n"
         f"SHA={sha}\n"
         "INSTALLED_AT=2026-10-21T00:00:00Z\n"
@@ -25,10 +25,16 @@ def _install_file(tmp_path: Path, *, sha: str = "a" * 40) -> Path:
 
 def test_read_install_info(tmp_path: Path) -> None:
     info = updates.read_install_info(_install_file(tmp_path))
-    assert info.version == "1.0.0"
+    assert info.version == __version__
     assert info.ref == "main"
     assert info.sha == "a" * 40
     assert info.repo == "Hijackery/stacksentry"
+
+
+def test_installed_version_prefers_running_code(tmp_path: Path) -> None:
+    path = tmp_path / ".stacksentry-install"
+    path.write_text("VERSION=0.9.0\nSHA=abc\n", encoding="utf-8")
+    assert updates.read_install_info(path).version == __version__
 
 
 def test_bad_repo_falls_back(tmp_path: Path) -> None:

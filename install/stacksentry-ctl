@@ -54,7 +54,7 @@ safe_int() {
 
 update_pin() {
     # Пин обновления хранится в root-owned конфиге и задаётся оператором.
-    # Без него self-update не запускается: иначе root выполнял бы mutable main.
+    # Пин опционален: без него self-update идёт из UPDATE_REF (по умолчанию main).
     [ -r "$PREFIX_CONF" ] || return 1
     (
         # shellcheck disable=SC1090
@@ -172,6 +172,11 @@ apt_enqueue() {
         fi
         log "systemd-run не сработал ($(tr -d '\n' <"$srun_err" 2>/dev/null)) — фон"
         rm -f "$srun_err"
+    fi
+    if [ "$kind" = "selfupdate" ]; then
+        # Фоновый запуск от сервисного пользователя не получит root и молча
+        # провалит обновление. Лучше вернуть ошибку в бот, чем врать «запущено».
+        die "не удалось запустить self-update: установите stacksentry-self-update.service"
     fi
     local apt_log="$apt_dir/$log_name"
     env -u SUDO_USER setsid nohup "$0" "$worker" >>"$apt_log" 2>&1 &

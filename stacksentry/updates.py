@@ -88,7 +88,9 @@ def _git_sha(base: Path) -> str:
 def read_install_info(path: Path | None = None) -> InstallInfo:
     """Метаданные установки; для dev-checkout берём commit из git."""
     data = _parse_env_file(path or INSTALL_FILE)
-    version = data.get("VERSION", "") or __version__
+    # Версию берём из работающего кода: метаданные могли остаться от старой
+    # установки, и тогда UI показывал «1.0.0» при уже установленном 1.1.x.
+    version = __version__
     ref = data.get("REF", "") or "main"
     sha = data.get("SHA", "") or _git_sha(BASE_DIR)
     repo = data.get("REPO", "") or DEFAULT_REPO

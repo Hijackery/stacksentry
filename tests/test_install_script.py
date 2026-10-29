@@ -247,6 +247,20 @@ def test_scripts_pass_shellcheck(script: Path) -> None:
     assert result.returncode == 0, result.stdout + result.stderr
 
 
+def test_update_ignores_installed_prefix_as_source() -> None:
+    text = (BASE_DIR / "install.sh").read_text(encoding="utf-8")
+    assert "При --update нельзя брать исходники из $PREFIX" in text
+    assert 'if [ "$UPDATE" -eq 1 ]' in text
+
+
+def test_installer_creates_self_update_unit_for_bot_updates() -> None:
+    text = (BASE_DIR / "install.sh").read_text(encoding="utf-8")
+    assert "stacksentry-self-update:_self_update_worker" in text
+    assert "/etc/systemd/system/stacksentry-self-update.service" in text
+    ctl = (BASE_DIR / "install" / "stacksentry-ctl").read_text(encoding="utf-8")
+    assert 'if [ "$kind" = "selfupdate" ]' in ctl
+
+
 def test_installer_sets_up_webapp_update_spool() -> None:
     text = (BASE_DIR / "install.sh").read_text(encoding="utf-8")
     assert '"$STATE_DIR/update"' in text
