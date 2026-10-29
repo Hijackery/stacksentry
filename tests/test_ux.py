@@ -7,6 +7,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import re
 from collections.abc import AsyncIterator, Callable
 from datetime import datetime, timezone
@@ -500,6 +501,92 @@ async def test_previous_screen_is_deleted(bot_app: MonitorBot) -> None:
     # Каждый новый экран убирает предыдущий: 50 → 101, затем 101 → 102.
     assert [c.args for c in bot.delete_message.await_args_list] == [(7, 50), (7, 101)]
     assert bot_app._last_screen[7] == 102
+    assert bot_app.storage.get_screen_message(7) == 102
+
+
+async def test_screen_survives_restart(bot_app: MonitorBot) -> None:
+    """После рестарта бот помнит прошлое меню и не оставляет его сиротой."""
+    bot = AsyncMock()
+
+    class FakeMessage:
+        chat_id = 7
+
+        def get_bot(self) -> AsyncMock:
+            return bot
+
+        async def reply_text(self, **_kwargs: object) -> object:
+            return SimpleNamespace(message_id=101)
+
+    bot_app._last_screen.clear()
+    bot_app.storage.set_screen_message(7, 50)
+
+    sent = await bot_app._reply_screen(FakeMessage(), "после рестарта")  # type: ignore[arg-type]
+
+    assert sent is not None and sent.message_id == 101
+    assert [c.args for c in bot.delete_message.await_args_list] == [(7, 50)]
+    assert bot_app._last_screen[7] == 101
+
+
+async def test_concurrent_screens_leave_one(bot_app: MonitorBot) -> None:
+    """Два одновременных ответа не должны оставить два меню."""
+    bot = AsyncMock()
+    counter = 0
+
+    class FakeMessage:
+        chat_id = 7
+
+        def get_bot(self) -> AsyncMock:
+            return bot
+
+        async def reply_text(self, **_kwargs: object) -> object:
+            nonlocal counter
+            counter += 1
+            return SimpleNamespace(message_id=100 + counter)
+
+    bot_app._last_screen.clear()
+    message = FakeMessage()
+
+    await asyncio.gather(
+        bot_app._reply_screen(message, "первый"),  # type: ignore[arg-type]
+        bot_app._reply_screen(message, "второй"),  # type: ignore[arg-type]
+    )
+
+    assert counter == 2
+    assert [c.args for c in bot.delete_message.await_args_list] == [(7, 101)]
+    assert bot_app._last_screen[7] == 102
+
+
+async def test_stale_message_is_not_second_menu(bot_app: MonitorBot) -> None:
+    """Кнопка на старом меню делает его текущим, а лишнее меню убирает."""
+    bot = AsyncMock()
+
+    class FakeMessage:
+        chat_id = 7
+        message_id = 200
+
+        def get_bot(self) -> AsyncMock:
+            return bot
+
+    bot_app._last_screen[7] = 100
+
+    await bot_app._adopt_screen(FakeMessage())  # type: ignore[arg-type]
+
+    assert [c.args for c in bot.delete_message.await_args_list] == [(7, 100)]
+    assert bot_app._last_screen[7] == 200
+
+
+async def test_private_notify_replaces_screen(bot_app: MonitorBot) -> None:
+    """Алерт в личном чате обновляет меню, а не добавляет сообщение."""
+    calls: list[tuple[int, str]] = []
+
+    async def fake_show(chat_id: int, text: str, **_kwargs: object) -> object:
+        calls.append((chat_id, text))
+        return SimpleNamespace(message_id=1)
+
+    bot_app._show_screen = fake_show  # type: ignore[assignment]
+
+    assert await bot_app._notify(ADMIN_ID, "алерт")
+    assert calls == [(ADMIN_ID, "алерт")]
 
 
 async def test_stale_callback_answer_does_not_crash(bot_app: MonitorBot) -> None:

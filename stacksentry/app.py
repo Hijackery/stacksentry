@@ -125,8 +125,10 @@ class MonitorBot(CommandMixin, JobsMixin):
         #: Троттлинг по «ведрам»: {"journal": {user_id: время}, "refresh": {...}}
         self._throttle_seen: dict[str, dict[int, float]] = {}
         #: Последний «экран» в чате: при переходе к новому меню старый удаляем,
-        #: чтобы не плодить вереницу сообщений. Алерты и отчёты не трогаем.
+        #: чтобы не плодить вереницу сообщений. Id также хранится в базе и
+        #: переживает рестарт бота.
         self._last_screen: dict[int, int] = {}
+        self._screen_locks: dict[int, asyncio.Lock] = {}
         #: Step-up 2FA: ожидание кода, неудачи и блокировка после перебора.
         self._totp_replay = ReplayGuard(ttl=120.0, claim=self.storage.claim_replay)
         self._totp_failures: dict[int, list[float]] = {}
@@ -278,8 +280,15 @@ class MonitorBot(CommandMixin, JobsMixin):
         *,
         markup: InlineKeyboardMarkup | None = None,
     ) -> bool:
+        chunks = _split(text, 3500)
+        # В личном чате администратора весь вывод живёт в одном сообщении:
+        # алерты и отчёты не должны оставлять после себя вереницу меню.
+        if chat_id in self.settings.admin_ids and len(chunks) == 1:
+            return bool(
+                await self._show_screen(chat_id, text, markup=markup)
+            )
         delivered = True
-        for chunk in _split(text, 3500):
+        for chunk in chunks:
             try:
                 await _send_with_retry(
                     self.app.bot.send_message,
@@ -716,8 +725,10 @@ class MonitorBot(CommandMixin, JobsMixin):
             return
         if pending["expires"] < time.time():
             self._pending_2fa.pop(user_id, None)
-            await message.reply_text(
-                "⌛ Время ввода кода истекло. Начните действие заново."
+            await self._reply_screen(
+                message,
+                "⌛ Время ввода кода истекло. Начните действие заново.",
+                markup=ui.twofa_menu(),
             )
             return
         ok, reason, left = self._check_totp(user_id, code)
@@ -730,7 +741,11 @@ class MonitorBot(CommandMixin, JobsMixin):
         )
         if not ok:
             suffix = f" Осталось попыток: {left}." if left else ""
-            await message.reply_text(f"❌ {ui.esc(reason)}{suffix}")
+            await self._reply_screen(
+                message,
+                f"❌ {ui.esc(reason)}{suffix}\n\nВведите код ещё раз.",
+                markup=ui.twofa_menu(),
+            )
             if left == 0:
                 self._pending_2fa.pop(user_id, None)
             return
@@ -738,17 +753,17 @@ class MonitorBot(CommandMixin, JobsMixin):
             self.storage.set_elevation, user_id, self.settings.elevation_ttl
         )
         self._pending_2fa.pop(user_id, None)
-        await message.reply_text(
+        await self._reply_screen(
+            message,
             f"🔓 Действия разблокированы до "
             f"{time.strftime('%H:%M', time.localtime(until))}.",
-            parse_mode=ParseMode.HTML,
         )
         action = str(pending.get("action", ""))
         if action == "unlock":
-            await message.reply_text(
+            await self._reply_screen(
+                message,
                 ui.render_security(self.settings, until),
-                parse_mode=ParseMode.HTML,
-                reply_markup=ui.security_menu(True),
+                markup=ui.security_menu(True),
             )
             return
         await self._send_confirmation(
@@ -762,10 +777,10 @@ class MonitorBot(CommandMixin, JobsMixin):
         if description is None:
             return
         pending = self.actions.request(action, description, arg, owner_id=user_id)
-        await message.reply_text(
+        await self._reply_screen(
+            message,
             f"⚠️ {description}",
-            parse_mode=ParseMode.HTML,
-            reply_markup=ui.confirm_menu(action, pending.token),
+            markup=ui.confirm_menu(action, pending.token),
         )
 
     async def _show_security(self, callback: CallbackQuery, user_id: int) -> None:
@@ -880,6 +895,7 @@ class MonitorBot(CommandMixin, JobsMixin):
         chat_id = _chat_id(query)
         # Переиспользуем сообщение с подтверждением, а не плодим ещё одно.
         status = _message_of(query)
+        await self._adopt_screen(status)
         await _safe_edit(status, "⏳ Выполняю…", markup=None)
         # Кнопки apt-обновлений скрыты на других ОС, но callback_data можно
         # подделать: не запускаем заведомо неверный пакетный менеджер.
@@ -1022,8 +1038,11 @@ class MonitorBot(CommandMixin, JobsMixin):
         if user.id in self._pending_2fa:
             code = "".join(ch for ch in (message.text or "") if ch.isdigit())
             if len(code) != 6:
-                await message.reply_text(
-                    "Нужны 6 цифр из приложения-аутентификатора или нажмите «Отмена»."
+                await self._reply_screen(
+                    message,
+                    "Нужны 6 цифр из приложения-аутентификатора "
+                    "или нажмите «Отмена».",
+                    markup=ui.twofa_menu(),
                 )
                 return
             try:

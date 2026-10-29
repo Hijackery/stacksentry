@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 from typing import Any
 
 from .actions import ActionManager
@@ -29,6 +30,7 @@ class BotBase:
     platform: PlatformInfo
     app: Any
     _last_screen: dict[int, int]
+    _screen_locks: dict[int, asyncio.Lock]
     _snapshot: MonitorSnapshot | None
     _snapshot_at: float
 

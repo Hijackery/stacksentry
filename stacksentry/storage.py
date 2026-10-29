@@ -73,6 +73,12 @@ CREATE TABLE IF NOT EXISTS replay_keys (
 );
 
 CREATE INDEX IF NOT EXISTS idx_replay_expires ON replay_keys(expires);
+
+CREATE TABLE IF NOT EXISTS screen_state (
+    chat_id INTEGER PRIMARY KEY,
+    message_id INTEGER NOT NULL,
+    updated_at REAL NOT NULL
+);
 """
 
 
@@ -326,6 +332,28 @@ class Storage:
         with self._lock:
             self.conn.execute(
                 "DELETE FROM pending_jobs WHERE created_at < ?", (older_than,)
+            )
+
+    # ---------------------------------------------------------- screen state
+
+    def get_screen_message(self, chat_id: int) -> int:
+        """Возвращает id сообщения-меню, чтобы не плодить его после рестарта."""
+        with self._lock:
+            row = self.conn.execute(
+                "SELECT message_id FROM screen_state WHERE chat_id = ?",
+                (chat_id,),
+            ).fetchone()
+        return int(row["message_id"]) if row else 0
+
+    def set_screen_message(self, chat_id: int, message_id: int) -> None:
+        with self._lock:
+            self.conn.execute(
+                "INSERT INTO screen_state (chat_id, message_id, updated_at) "
+                "VALUES (?, ?, ?) "
+                "ON CONFLICT(chat_id) DO UPDATE SET "
+                "message_id = excluded.message_id, "
+                "updated_at = excluded.updated_at",
+                (chat_id, message_id, time.time()),
             )
 
     # ----------------------------------------------------------------- audit

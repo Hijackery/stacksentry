@@ -4,9 +4,11 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import sqlite3
 import sys
 import time
-from typing import Any
+from contextlib import suppress
+from typing import Any, cast
 
 from telegram import CallbackQuery, InlineKeyboardMarkup, Message, Update
 from telegram.constants import ChatAction, ParseMode
@@ -138,12 +140,16 @@ class CommandMixin(BotBase):
         await self._send_update_check(message)
 
     async def _send_update_check(self, message: Message) -> None:
-        status = await self._reply_screen(message, "⏳ Проверяю обновления…")
+        await self._show_screen(
+            message.chat_id, "⏳ Проверяю обновления…", reply_to=message
+        )
         info = await asyncio.to_thread(check_for_update)
-        if status is not None:
-            await _safe_edit(
-                status, ui.render_update(info), markup=ui.update_menu(info)
-            )
+        await self._show_screen(
+            message.chat_id,
+            ui.render_update(info),
+            markup=ui.update_menu(info),
+            reply_to=message,
+        )
 
     async def _show_update_check(self, query: CallbackQuery) -> None:
         status = _message_of(query)
@@ -321,6 +327,40 @@ class CommandMixin(BotBase):
             markup=ui.confirm_menu(ACTION_COMMAND, pending.token),
         )
 
+    def _screen_lock(self, chat_id: int) -> asyncio.Lock:
+        lock = self._screen_locks.get(chat_id)
+        if lock is None:
+            lock = asyncio.Lock()
+            self._screen_locks[chat_id] = lock
+        return lock
+
+    async def _tracked_screen(self, chat_id: int) -> int:
+        """Id текущего меню: сначала память, затем база после рестарта."""
+        message_id = self._last_screen.get(chat_id, 0)
+        if message_id:
+            return message_id
+        try:
+            message_id = await asyncio.to_thread(
+                self.storage.get_screen_message, chat_id
+            )
+        except sqlite3.Error as exc:
+            logger.warning("Не удалось прочитать прошлый экран: %s", exc)
+            return 0
+        if message_id:
+            self._last_screen[chat_id] = message_id
+        return message_id
+
+    async def _remember_screen(self, chat_id: int, message_id: int) -> None:
+        if not chat_id or not message_id:
+            return
+        self._last_screen[chat_id] = message_id
+        try:
+            await asyncio.to_thread(
+                self.storage.set_screen_message, chat_id, message_id
+            )
+        except sqlite3.Error as exc:
+            logger.warning("Не удалось сохранить текущий экран: %s", exc)
+
     async def _edit_message(
         self,
         chat_id: int,
@@ -340,11 +380,70 @@ class CommandMixin(BotBase):
                 disable_web_page_preview=True,
                 reply_markup=markup,
             )
+        except BadRequest as exc:
+            # Повторная отрисовка того же экрана: это успех, а не повод
+            # отправить второе сообщение.
+            if "not modified" in str(exc).lower():
+                await self._remember_screen(chat_id, message_id)
+                return True
+            logger.debug("Не удалось обновить сообщение действия: %s", exc)
+            return False
         except TelegramError as exc:
             logger.debug("Не удалось обновить сообщение действия: %s", exc)
             return False
-        self._last_screen[chat_id] = message_id
+        await self._remember_screen(chat_id, message_id)
         return True
+
+    async def _show_screen(
+        self,
+        chat_id: int,
+        text: str,
+        *,
+        markup: InlineKeyboardMarkup | None = None,
+        reply_to: Message | None = None,
+    ) -> Message | None:
+        """Показывает экран, оставляя в чате только одно сообщение бота."""
+        if not chat_id:
+            return None
+        async with self._screen_lock(chat_id):
+            previous = await self._tracked_screen(chat_id)
+            sender = (
+                reply_to.reply_text
+                if reply_to is not None
+                else self.app.bot.send_message
+            )
+            try:
+                sent = await _send_with_retry(
+                    sender,
+                    text=text,
+                    parse_mode=ParseMode.HTML,
+                    disable_web_page_preview=True,
+                    reply_markup=markup,
+                )
+            except TelegramError as exc:
+                logger.warning("Не удалось отправить экран: %s", exc)
+                return None
+            if sent is None:
+                return None
+            mid = getattr(sent, "message_id", None)
+            if not isinstance(mid, int):
+                return cast(Message | None, sent)
+            await self._remember_screen(chat_id, mid)
+            if previous and previous != mid:
+                bot = reply_to.get_bot() if reply_to is not None else self.app.bot
+                try:
+                    await bot.delete_message(chat_id, previous)
+                except TelegramError as exc:
+                    logger.debug("Не удалось удалить прошлый экран: %s", exc)
+                    # Если удалить старый нельзя, возвращаем его на место:
+                    # лучше одно сообщение с новым текстом, чем два меню.
+                    with suppress(TelegramError):
+                        await bot.delete_message(chat_id, mid)
+                    if await self._edit_message(
+                        chat_id, previous, text, markup=markup
+                    ):
+                        return cast(Message | None, sent)
+            return cast(Message | None, sent)
 
     async def _replace_or_notify(
         self,
@@ -367,32 +466,9 @@ class CommandMixin(BotBase):
         markup: InlineKeyboardMarkup | None = None,
     ) -> Message | None:
         """Показывает новый экран и убирает предыдущий, чтобы меню не копились."""
-        chat_id = message.chat_id
-        try:
-            sent = await _send_with_retry(
-                message.reply_text,
-                text=text,
-                parse_mode=ParseMode.HTML,
-                disable_web_page_preview=True,
-                reply_markup=markup,
-            )
-        except TelegramError as exc:
-            logger.warning("Не удалось отправить экран: %s", exc)
-            return None
-        if sent is None:
-            return None
-        mid = getattr(sent, "message_id", None)
-        if not isinstance(mid, int):
-            # Тесты и нестандартные транспорты могут не вернуть Message.
-            return sent
-        previous = self._last_screen.get(chat_id)
-        self._last_screen[chat_id] = mid
-        if previous and previous != mid:
-            try:
-                await message.get_bot().delete_message(chat_id, previous)
-            except TelegramError as exc:
-                logger.debug("Не удалось удалить прошлый экран: %s", exc)
-        return sent
+        return await self._show_screen(
+            message.chat_id, text, markup=markup, reply_to=message
+        )
 
     async def _show_run_log(
         self, callback: CallbackQuery, data: str, user_id: int
@@ -470,6 +546,20 @@ class CommandMixin(BotBase):
             markup=ui.log_view_menu(unit),
         )
 
+    async def _adopt_screen(self, message: Message) -> None:
+        """Делает сообщение, на кнопку которого нажали, единственным экраном."""
+        chat_id = message.chat_id
+        async with self._screen_lock(chat_id):
+            previous = await self._tracked_screen(chat_id)
+            if previous and previous != message.message_id:
+                try:
+                    await message.get_bot().delete_message(chat_id, previous)
+                except TelegramError as exc:
+                    # Своё сообщение обычно удаляется; если Telegram не дал,
+                    # продолжаем с нажатым экраном, чтобы действие не сорвалось.
+                    logger.debug("Не удалось удалить лишний экран: %s", exc)
+            await self._remember_screen(chat_id, message.message_id)
+
     async def _edit(
         self,
         callback: CallbackQuery,
@@ -479,9 +569,10 @@ class CommandMixin(BotBase):
     ) -> None:
         try:
             screen = _message_of(callback)
-            self._last_screen[screen.chat_id] = screen.message_id
         except RuntimeError:
-            pass
+            screen = None
+        if screen is not None:
+            await self._adopt_screen(screen)
         try:
             await _send_with_retry(
                 callback.edit_message_text,
@@ -502,12 +593,6 @@ class CommandMixin(BotBase):
         except TelegramError as exc:
             logger.warning("Не удалось обновить сообщение: %s", exc)
         message = _message_of(callback)
-        try:
-            await _send_with_retry(
-                message.reply_text,
-                text=text,
-                parse_mode=ParseMode.HTML,
-                reply_markup=markup,
-            )
-        except TelegramError as exc:
-            logger.warning("Не удалось отправить сообщение: %s", exc)
+        await self._show_screen(
+            message.chat_id, text, markup=markup, reply_to=message
+        )
