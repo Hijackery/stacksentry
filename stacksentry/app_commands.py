@@ -224,19 +224,27 @@ class CommandMixin(BotBase):
             ui.subscriptions_menu(offset, has_more=has_more),
         )
 
+    async def _history_text(self, hours: int) -> str:
+        rows = await asyncio.to_thread(
+            self.storage.get_series, time.time() - hours * 3600, hours
+        )
+        title = {
+            24: "Последние 24 часа",
+            168: "Последние 7 дней",
+            720: "Последние 30 дней",
+        }
+        return ui.render_history(rows, title=title.get(hours, f"Последние {hours} ч"))
+
     async def cmd_history(
         self, update: Update, _context: ContextTypes.DEFAULT_TYPE
     ) -> None:
         message = update.effective_message
         if message is None or not await self._guard(message, update.effective_user):
             return
-        rows = await asyncio.to_thread(
-            self.storage.get_series, time.time() - 24 * 3600, 24
-        )
         await self._reply_screen(
             message,
-            ui.render_history(rows, title="Последние 24 часа"),
-            markup=self._main_menu(_user_id(update)),
+            await self._history_text(24),
+            markup=ui.history_menu(24),
         )
 
     async def cmd_audit(

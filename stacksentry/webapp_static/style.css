@@ -243,6 +243,21 @@ a { color: var(--link); }
 }
 .row-sub { color: var(--muted); font-size: 11px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .row-meta { color: var(--muted); font-size: 11px; text-align: right; white-space: nowrap; }
+.dashboard-bar {
+  display: flex; align-items: center; justify-content: space-between;
+  gap: 8px; padding: 0 2px;
+}
+.dashboard-settings .check-row {
+  display: flex; align-items: center; gap: 8px; padding: 8px 0;
+  border-bottom: 1px solid var(--border); font-size: 13px;
+}
+.dashboard-settings .check-row:last-child { border-bottom: 0; }
+.dashboard-settings input { width: 18px; height: 18px; accent-color: var(--accent); }
+.pin-button {
+  width: 28px; height: 28px; flex: 0 0 auto; border: 0; border-radius: 8px;
+  background: transparent; color: var(--muted); font-size: 16px; line-height: 1;
+}
+.pin-button.active { color: var(--warn); background: color-mix(in srgb, var(--warn) 12%, transparent); }
 .dot { width: 8px; height: 8px; border-radius: 50%; flex: 0 0 auto; background: var(--muted); }
 .dot.ok { background: var(--ok); }
 .dot.warn { background: var(--warn); }

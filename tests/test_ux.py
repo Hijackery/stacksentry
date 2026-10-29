@@ -154,7 +154,9 @@ async def _press(
         "subs",
         "subs:10",
         "history",
+        "history:720",
         "logs_menu",
+        "logsearch:x-ui",
         "maintenance",
         "command_prompt",
         "details",
@@ -595,6 +597,32 @@ async def test_private_notify_replaces_screen(bot_app: MonitorBot) -> None:
 
     assert await bot_app._notify(ADMIN_ID, "алерт")
     assert calls == [(ADMIN_ID, "алерт")]
+
+
+async def test_log_search_filters_lines(
+    bot_app: MonitorBot, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    captured: dict[str, str] = {}
+
+    class FakeMessage:
+        chat_id = 7
+
+        def get_bot(self) -> AsyncMock:
+            return AsyncMock()
+
+        async def reply_text(self, **kwargs: object) -> object:
+            captured["text"] = str(kwargs.get("text", ""))
+            return SimpleNamespace(message_id=101)
+
+    async def fake_journal(*_args: object, **_kwargs: object) -> str:
+        return "ok\nERROR connection refused\nok again"
+
+    monkeypatch.setattr(bot_app.actions, "journal", fake_journal)
+
+    await bot_app._run_log_search(FakeMessage(), ADMIN_ID, "x-ui", "error")  # type: ignore[arg-type]
+
+    assert "найдено 1" in captured["text"]
+    assert "ERROR connection refused" in captured["text"]
 
 
 async def test_stale_callback_answer_does_not_crash(bot_app: MonitorBot) -> None:

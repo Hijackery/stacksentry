@@ -29,6 +29,8 @@ class Rule(str, Enum):
     service = "service"
     panel = "panel"
     system = "system"
+    inode = "inode"
+    check = "check"
 
 
 def _is_subscription_warning(text: str) -> bool:
@@ -70,6 +72,7 @@ class AlertEngine:
         findings = list(self._metrics(snapshot.system))
         findings.extend(self._services(snapshot))
         findings.extend(self._panel(snapshot))
+        findings.extend(self._checks(snapshot))
         if "services" in snapshot.unavailable:
             findings.append(
                 Finding(
@@ -129,8 +132,42 @@ class AlertEngine:
                 f"Диск {self.settings.disk_path}",
             ),
             (Rule.swap, metrics.swap_percent, 50.0, 80.0, "Swap"),
+            (
+                Rule.inode,
+                metrics.inode_percent,
+                self.settings.inode_warn,
+                self.settings.inode_crit,
+                "Inode",
+            ),
         )
-        return [finding for finding in map(self._threshold, checks) if finding]
+        findings = [finding for finding in map(self._threshold, checks) if finding]
+        forecast = metrics.disk_forecast_days
+        if forecast is not None and forecast <= 7:
+            severity = Severity.critical if forecast <= 2 else Severity.warning
+            findings.append(
+                Finding(
+                    Rule.disk,
+                    severity,
+                    f"Диск заполнится примерно через {forecast:.0f} дн.",
+                    f"текущее заполнение {metrics.disk_percent:.1f}%",
+                    key="disk:forecast",
+                    resolve="Освободите место или увеличьте диск",
+                )
+            )
+        return findings
+
+    def _checks(self, snapshot: MonitorSnapshot) -> list[Finding]:
+        return [
+            Finding(
+                Rule.check,
+                check.severity,
+                check.title,
+                check.detail,
+                key=check.key,
+                resolve=check.resolve,
+            )
+            for check in snapshot.checks
+        ]
 
     def _threshold(
         self,
@@ -366,6 +403,8 @@ def _source_of(key: str) -> str:
         return "services"
     if key.startswith("panel:"):
         return "panel"
+    if key.startswith("check:"):
+        return "checks"
     if key.startswith("subs") or key.startswith("subscription"):
         return "subs"
     return "metrics"

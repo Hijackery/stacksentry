@@ -19,7 +19,7 @@ from pathlib import Path
 from typing import Any, cast
 
 from fastapi import Depends, FastAPI, HTTPException, Request, Response
-from fastapi.responses import JSONResponse
+from fastapi.responses import JSONResponse, PlainTextResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, ConfigDict, Field
 
@@ -140,6 +140,7 @@ def _snapshot_json(snapshot: Any, age: float) -> dict[str, Any]:
         "panel": asdict(snapshot.panel),
         "inbounds": [asdict(item) for item in snapshot.inbounds],
         "subscriptions": [asdict(item) for item in snapshot.subscriptions],
+        "checks": [asdict(item) for item in snapshot.checks],
         "warnings": list(snapshot.warnings),
         "unavailable": sorted(snapshot.unavailable),
         "total_used_bytes": snapshot.total_used_bytes,
@@ -350,6 +351,38 @@ def create_app(
     async def healthz() -> dict[str, Any]:
         return {"ok": True, "version": __version__}
 
+    @app.get("/metrics", response_class=PlainTextResponse)
+    async def metrics(request: Request) -> PlainTextResponse:
+        token = config.settings.webapp_metrics_token
+        if token:
+            auth = request.headers.get("authorization", "")
+            if not hmac.compare_digest(auth, f"Bearer {token}"):
+                raise HTTPException(status_code=401, detail="нужен токен метрик")
+        samples = await asyncio.to_thread(storage.count_samples)
+        pending = await asyncio.to_thread(storage.count_pending_alerts)
+        body = (
+            "\n".join(
+                (
+                    "# HELP stacksentry_up StackSentry web process is alive",
+                    "# TYPE stacksentry_up gauge",
+                    "stacksentry_up 1",
+                    "# HELP stacksentry_build_info Build information",
+                    "# TYPE stacksentry_build_info gauge",
+                    f'stacksentry_build_info{{version="{__version__}"}} 1',
+                    "# HELP stacksentry_samples_total Stored metric samples",
+                    "# TYPE stacksentry_samples_total gauge",
+                    f"stacksentry_samples_total {samples}",
+                    "# HELP stacksentry_alert_outbox_pending Pending alerts",
+                    "# TYPE stacksentry_alert_outbox_pending gauge",
+                    f"stacksentry_alert_outbox_pending {pending}",
+                )
+            )
+            + "\n"
+        )
+        return PlainTextResponse(
+            body, media_type="text/plain; version=0.0.4; charset=utf-8"
+        )
+
     @app.get("/api/status")
     async def status(user_id: int = Depends(current_user)) -> dict[str, Any]:
         now = time.monotonic()
@@ -366,9 +399,9 @@ def create_app(
 
     @app.get("/api/history")
     async def history(hours: int = 24, user_id: int = Depends(current_user)) -> Any:
-        hours = max(1, min(hours, 168))
+        hours = max(1, min(hours, 720))
         rows = await asyncio.to_thread(
-            storage.get_series, time.time() - hours * 3600, min(hours, 168)
+            storage.get_series, time.time() - hours * 3600, hours
         )
         return [dict(row) for row in rows]
 

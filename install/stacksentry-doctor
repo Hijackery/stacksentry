@@ -1,0 +1,5 @@
+#!/usr/bin/env bash
+# stacksentry-doctor — самодиагностика установки StackSentry.
+set -euo pipefail
+PREFIX="${PREFIX:-/opt/stacksentry}"
+exec "$PREFIX/.venv/bin/python" -m stacksentry.doctor "$@"

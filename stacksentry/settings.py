@@ -165,6 +165,7 @@ class Settings:
     disk_path: str
     alert_confirm_checks: int = 2
     alert_recovery_checks: int = 2
+    log_json: bool = False
 
     panel_type: str = "3x-ui"
     panel_username: str = ""
@@ -186,6 +187,7 @@ class Settings:
     webapp_session_ttl: int = 3600
     #: Публичный адрес терминала для вкладки внутри Mini App.
     webapp_terminal_origin: str = ""
+    webapp_metrics_token: str = ""
 
     #: Фоновая проверка новых версий StackSentry и уведомление админов.
     update_notify: bool = True
@@ -199,6 +201,17 @@ class Settings:
     #: Тихие часы HH:MM, например 23:00 и 08:00. Критические алерты идут всегда.
     alert_quiet_start: str = ""
     alert_quiet_end: str = ""
+
+    #: Дополнительные проверки инфраструктуры.
+    inode_warn: float = 85.0
+    inode_crit: float = 95.0
+    check_failed_units: bool = True
+    check_tls: bool = True
+    check_backup_path: str = ""
+    check_backup_max_age_h: int = 36
+    check_http_urls: tuple[str, ...] = ()
+    check_dns_hosts: tuple[str, ...] = ()
+    check_smart: bool = False
 
     extra: dict[str, str] = field(default_factory=dict, repr=False)
 
@@ -260,6 +273,7 @@ def _build_settings() -> Settings:
         state_path=Path(env_str("STATE_PATH", str(BASE_DIR / "state.db"))),
         log_path=Path(env_str("LOG_PATH", str(BASE_DIR / "logs" / "bot.log"))),
         log_level=env_str("LOG_LEVEL", "INFO").upper(),
+        log_json=env_bool("LOG_JSON", False),
         # Нормализуем сразу при чтении: даже если в .env вручную вписали
         # «https://host:5580/» или «/panel/», адрес API склеится без «//».
         panel_url=env_str("PANEL_URL").rstrip("/"),
@@ -303,6 +317,7 @@ def _build_settings() -> Settings:
         webapp_secret=env_str("WEBAPP_SECRET").strip(),
         webapp_session_ttl=env_int("WEBAPP_SESSION_TTL", 3600, minimum=300),
         webapp_terminal_origin=env_str("WEBAPP_TERMINAL_ORIGIN").strip().rstrip("/"),
+        webapp_metrics_token=env_str("WEBAPP_METRICS_TOKEN").strip(),
         update_notify=env_bool("UPDATE_NOTIFY", True),
         update_check_interval=env_int("UPDATE_CHECK_INTERVAL", 21600, minimum=3600),
         alert_critical_chat_id=env_int("ALERT_CRITICAL_CHAT_ID", 0) or None,
@@ -311,6 +326,15 @@ def _build_settings() -> Settings:
         alert_warning_topic_id=env_int("ALERT_WARNING_TOPIC_ID", 0) or None,
         alert_quiet_start=env_str("ALERT_QUIET_START").strip(),
         alert_quiet_end=env_str("ALERT_QUIET_END").strip(),
+        inode_warn=env_float("INODE_WARN", 85.0),
+        inode_crit=env_float("INODE_CRIT", 95.0),
+        check_failed_units=env_bool("CHECK_FAILED_UNITS", True),
+        check_tls=env_bool("CHECK_TLS", True),
+        check_backup_path=env_str("CHECK_BACKUP_PATH").strip(),
+        check_backup_max_age_h=env_int("CHECK_BACKUP_MAX_AGE_H", 36, minimum=1),
+        check_http_urls=tuple(env_str_list("CHECK_HTTP_URLS")),
+        check_dns_hosts=tuple(env_str_list("CHECK_DNS_HOSTS")),
+        check_smart=env_bool("CHECK_SMART", False),
     )
 
     problems = _validate(settings)
@@ -531,6 +555,8 @@ def _validate(settings: Settings) -> list[str]:
         and not settings.webapp_terminal_origin.startswith("https://")
     ):
         problems.append("WEBAPP_TERMINAL_ORIGIN должен начинаться с https://")
+    if settings.webapp_metrics_token and len(settings.webapp_metrics_token) < 16:
+        problems.append("WEBAPP_METRICS_TOKEN должен быть не короче 16 символов")
     if settings.require_2fa and not settings.totp_secret:
         problems.append(
             "TOTP_REQUIRED=1, но TOTP_SECRET пуст — некому подтверждать действия"
@@ -551,6 +577,13 @@ def _validate(settings: Settings) -> list[str]:
         problems.append("MEM_WARN должен быть меньше MEM_CRIT")
     if settings.disk_warn >= settings.disk_crit:
         problems.append("DISK_WARN должен быть меньше DISK_CRIT")
+    if settings.inode_warn >= settings.inode_crit:
+        problems.append("INODE_WARN должен быть меньше INODE_CRIT")
+    for url in settings.check_http_urls:
+        if not url.startswith(("http://", "https://")):
+            problems.append(
+                f"CHECK_HTTP_URLS: {url!r} должен начинаться с http:// или https://"
+            )
     for name, value in (
         ("ALERT_QUIET_START", settings.alert_quiet_start),
         ("ALERT_QUIET_END", settings.alert_quiet_end),

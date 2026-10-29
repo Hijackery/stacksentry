@@ -31,6 +31,7 @@ def test_ci_checks_install_scripts() -> None:
     for command in (
         "bash -n install.sh",
         "bash -n install/stacksentry-ctl",
+        "bash -n install/stacksentry-doctor",
         "shellcheck install.sh install/stacksentry-ctl",
         "visudo -cf install/stacksentry-sudoers",
     ):

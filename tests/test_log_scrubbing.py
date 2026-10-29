@@ -7,12 +7,13 @@
 
 from __future__ import annotations
 
+import json
 import logging
 from io import StringIO
 
 import pytest
 
-from stacksentry.app import _mask_id, _ScrubbingFormatter
+from stacksentry.app import _JsonScrubbingFormatter, _mask_id, _ScrubbingFormatter
 
 BOT_TOKEN = "123456789:AASECRETvalue1234567890"
 PANEL_TOKEN = "panel-secret-token-1234"
@@ -57,6 +58,26 @@ def test_traceback_text_is_redacted_too() -> None:
 
     assert BOT_TOKEN not in text
     assert "bot<redacted>" in text or "***" in text
+
+
+def test_json_log_is_one_line_and_redacts_secrets() -> None:
+    formatter = _JsonScrubbingFormatter("%(message)s", (BOT_TOKEN,))
+    record = logging.LogRecord(
+        "t",
+        logging.WARNING,
+        __file__,
+        1,
+        f"request with {BOT_TOKEN}",
+        None,
+        None,
+    )
+
+    payload = json.loads(formatter.format(record))
+
+    assert payload["level"] == "WARNING"
+    assert payload["logger"] == "t"
+    assert BOT_TOKEN not in payload["message"]
+    assert "***" in payload["message"]
 
 
 def test_short_values_are_left_alone() -> None:

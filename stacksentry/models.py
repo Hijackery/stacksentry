@@ -29,6 +29,9 @@ class SystemMetrics:
     net_recv_bytes: int
     net_up_bps: float = 0.0
     net_down_bps: float = 0.0
+    inode_percent: float = 0.0
+    inode_free: int = 0
+    disk_forecast_days: float | None = None
     collected_at: float = field(default_factory=time.time)
 
 
@@ -111,6 +114,17 @@ class InboundSummary:
 
 
 @dataclass(frozen=True, slots=True)
+class HealthCheck:
+    """Результат дополнительной проверки: SMART, TLS, бэкап, HTTP/DNS."""
+
+    key: str
+    severity: Severity
+    title: str
+    detail: str
+    resolve: str = ""
+
+
+@dataclass(frozen=True, slots=True)
 class MonitorSnapshot:
     """Полный срез состояния сервера и панели."""
 
@@ -119,6 +133,7 @@ class MonitorSnapshot:
     panel: PanelHealth
     inbounds: list[InboundSummary]
     subscriptions: list[Subscription]
+    checks: list[HealthCheck] = field(default_factory=list)
     warnings: list[str] = field(default_factory=list)
     #: Источники, которые в этом срезе не удалось опросить. Их прошлые
     #: состояния нельзя объявлять «восстановленными».

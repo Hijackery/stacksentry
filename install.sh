@@ -371,6 +371,7 @@ WEBAPP_HOME="${WEBAPP_HOME:-/var/lib/stacksentry-webapp}"
 SERVICE_NAME="stacksentry-bot"
 WRAPPER_PATH="${WRAPPER_PATH:-/usr/local/bin/stacksentry-ctl}"
 MENU_PATH="${MENU_PATH:-/usr/local/bin/stacksentry-menu}"
+DOCTOR_PATH="${DOCTOR_PATH:-/usr/local/bin/stacksentry-doctor}"
 UNIT_PATH="/etc/systemd/system/${SERVICE_NAME}.service"
 SUDOERS_PATH="/etc/sudoers.d/${SERVICE_NAME}"
 START_SERVICE=1
@@ -609,7 +610,7 @@ uninstall() {
         systemctl reset-failed "$SERVICE_NAME" >/dev/null 2>&1 || true
     fi
 
-    rm -f "$SUDOERS_PATH" "$WRAPPER_PATH" "$MENU_PATH" /etc/stacksentry.conf
+    rm -f "$SUDOERS_PATH" "$WRAPPER_PATH" "$MENU_PATH" "$DOCTOR_PATH" /etc/stacksentry.conf
 
     # Терминал (если ставился) — отдельная служба, пользователь и секреты.
     if command -v systemctl >/dev/null 2>&1; then
@@ -1892,6 +1893,9 @@ install -o root -g root -m 0755 "$PREFIX/install/stacksentry-ctl" "$WRAPPER_PATH
 # Консольная панель для быстрых правок настроек (sudo stacksentry-menu).
 install -o root -g root -m 0755 "$PREFIX/install/stacksentry-menu" "$MENU_PATH" \
     || fail "Не удалось поставить $MENU_PATH"
+# Самодиагностика: sudo stacksentry-doctor
+install -o root -g root -m 0755 "$PREFIX/install/stacksentry-doctor" "$DOCTOR_PATH" \
+    || fail "Не удалось поставить $DOCTOR_PATH"
 
 # visudo лежит в sbin и не всегда в PATH у не-login root-сессии.
 VISUDO="$(command -v visudo 2>/dev/null || true)"

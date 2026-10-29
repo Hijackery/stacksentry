@@ -247,6 +247,14 @@ def test_scripts_pass_shellcheck(script: Path) -> None:
     assert result.returncode == 0, result.stdout + result.stderr
 
 
+def test_installer_installs_doctor_command() -> None:
+    text = (BASE_DIR / "install.sh").read_text(encoding="utf-8")
+    assert "DOCTOR_PATH" in text
+    assert "stacksentry-doctor" in text
+    script = (BASE_DIR / "install" / "stacksentry-doctor").read_text(encoding="utf-8")
+    assert "stacksentry.doctor" in script
+
+
 def test_installer_keeps_local_copy_for_xui_menu_update() -> None:
     """`stacksentry-menu update` берёт установщик рядом с ботом, а не только из сети."""
     text = INSTALL_SH.read_text(encoding="utf-8")

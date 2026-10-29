@@ -31,6 +31,7 @@ class BotBase:
     app: Any
     _last_screen: dict[int, int]
     _screen_locks: dict[int, asyncio.Lock]
+    _log_searches: dict[int, str]
     _snapshot: MonitorSnapshot | None
     _snapshot_at: float
 

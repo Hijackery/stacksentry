@@ -73,6 +73,9 @@ from .ui_menus import (
     help_menu as help_menu,
 )
 from .ui_menus import (
+    history_menu as history_menu,
+)
+from .ui_menus import (
     home_button as home_button,
 )
 from .ui_menus import (

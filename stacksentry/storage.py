@@ -220,6 +220,29 @@ class Storage:
             ).fetchall()
         return list(reversed(rows))
 
+    def disk_forecast_days(self, *, window: float = 7 * 86400) -> float | None:
+        """Грубый прогноз заполнения диска по линейному тренду.
+
+        Осторожно возвращает None при коротком ряде или падении/плато:
+        ложная тревога «диск заполнится» хуже, чем отсутствие прогноза.
+        """
+        with self._lock:
+            rows = self.conn.execute(
+                "SELECT ts, disk FROM samples WHERE ts >= ? ORDER BY ts",
+                (time.time() - window,),
+            ).fetchall()
+        if len(rows) < 2:
+            return None
+        first = rows[0]
+        last = rows[-1]
+        span_days = (float(last["ts"]) - float(first["ts"])) / 86400
+        if span_days < 0.25:
+            return None
+        slope = (float(last["disk"]) - float(first["disk"])) / span_days
+        if slope <= 0.05:
+            return None
+        return max(0.0, (100.0 - float(last["disk"])) / slope)
+
     def count_samples(self) -> int:
         with self._lock:
             row = self.conn.execute("SELECT COUNT(*) AS n FROM samples").fetchone()
@@ -455,6 +478,13 @@ class Storage:
                 "WHERE sent_at IS NULL AND next_attempt <= ? ORDER BY id",
                 (moment,),
             ).fetchall()
+
+    def count_pending_alerts(self) -> int:
+        with self._lock:
+            row = self.conn.execute(
+                "SELECT COUNT(*) AS n FROM alert_outbox WHERE sent_at IS NULL"
+            ).fetchone()
+        return int(row["n"]) if row else 0
 
     def mark_alert_sent_row(self, row_id: int, at: float | None = None) -> None:
         moment = time.time() if at is None else at

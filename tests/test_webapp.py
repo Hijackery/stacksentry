@@ -146,6 +146,41 @@ def test_terminal_tab_origin_and_csp(
     assert "frame-src 'self' https://term.example.com" in policy
 
 
+def test_metrics_and_health_endpoints(
+    make_settings: Callable[..., Settings], storage: Storage
+) -> None:
+    settings = make_settings(webapp_enabled=True, webapp_secret=SECRET)
+    app = create_app(
+        _config(settings),
+        monitor=FakeMonitor(),  # type: ignore[arg-type]
+        storage=storage,
+    )
+    client = TestClient(app)
+    metrics = client.get("/metrics")
+    assert metrics.status_code == 200
+    assert "stacksentry_up 1" in metrics.text
+    assert "stacksentry_build_info" in metrics.text
+
+    guarded = make_settings(
+        webapp_enabled=True,
+        webapp_secret=SECRET,
+        webapp_metrics_token="m" * 20,
+    )
+    guarded_app = create_app(
+        _config(guarded),
+        monitor=FakeMonitor(),  # type: ignore[arg-type]
+        storage=storage,
+    )
+    guarded_client = TestClient(guarded_app)
+    assert guarded_client.get("/metrics").status_code == 401
+    assert (
+        guarded_client.get(
+            "/metrics", headers={"Authorization": "Bearer " + "m" * 20}
+        ).status_code
+        == 200
+    )
+
+
 def test_update_endpoint_is_cached_and_health_is_public(
     make_settings: Callable[..., Settings],
     storage: Storage,
@@ -286,6 +321,8 @@ def test_mini_app_has_help_tab() -> None:
     assert "update-banner" in js
     assert "Новая версия StackSentry" in js
     assert "loadUpdate" in js
+    assert "stacksentry.pins" in js
+    assert "Настроить дашборд" in js
 
 
 def test_cookie_flags(make_settings: Callable[..., Settings], storage: Storage) -> None:

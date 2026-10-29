@@ -51,6 +51,18 @@ class SystemCollector:
             net = psutil.net_io_counters()
         except (OSError, psutil.Error):
             net = None
+        inode_percent = 0.0
+        inode_free = 0
+        try:
+            stats = os.statvfs(self.disk_path)
+        except OSError:
+            try:
+                stats = os.statvfs("/")
+            except OSError:
+                stats = None
+        if stats is not None and stats.f_files:
+            inode_free = stats.f_ffree
+            inode_percent = (1 - stats.f_ffree / stats.f_files) * 100
         now = time.time()
 
         up_bps, down_bps = 0.0, 0.0
@@ -89,5 +101,7 @@ class SystemCollector:
             net_recv_bytes=net.bytes_recv if net else 0,
             net_up_bps=round(up_bps, 1),
             net_down_bps=round(down_bps, 1),
+            inode_percent=round(inode_percent, 1),
+            inode_free=inode_free,
             collected_at=now,
         )

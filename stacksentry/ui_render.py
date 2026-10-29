@@ -146,6 +146,12 @@ def render_system(metrics: SystemMetrics, settings: Settings) -> str:
     lines.append(
         f"Swap {metrics.swap_percent:.1f}% · Load {metrics.load1:.2f} · TCP {tcp}"
     )
+    if metrics.inode_percent > 0:
+        lines.append(f"Inode {metrics.inode_percent:.1f}%")
+    if metrics.disk_forecast_days is not None:
+        lines.append(
+            f"Прогноз диска: ~{metrics.disk_forecast_days:.0f} дн. до заполнения"
+        )
     lines.append(
         f"Сеть ↑ {fmt_bytes(metrics.net_sent_bytes)} / "
         f"↓ {fmt_bytes(metrics.net_recv_bytes)}"

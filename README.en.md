@@ -81,7 +81,7 @@ matters to Telegram and stays quiet when everything is fine.
 | **Alerts** | hysteresis without flapping, cooldown, an “I know, until morning” mute; restart and log buttons right on the alert |
 | **Actions** | service and panel core restart, package updates, OS release upgrade (APT), reboot, allow-listed commands |
 | **Updates** | `main` check and an “Update StackSentry” button with confirmation and 2FA; no GitHub Releases or tags |
-| **History** | hourly CPU/RAM/disk averages for the last day, so you can see how the server behaved overnight |
+| **History** | hourly CPU/RAM/disk averages for 24 hours, 7 or 30 days; p95 and peaks |
 | **Install** | one command, an adaptive wizard for OS/services/panel, unattended mode, self-check |
 | **Universality** | systemd, OpenRC, SysVinit; `apt`/`dnf`/`yum`/`zypper`/`pacman`/`apk`/`xbps`/`emerge`/`eopkg`/`pkg`; Python 3.10+ |
 | **Mini App** | read-only Telegram dashboard: overview, services, panel, traffic, subscriptions, history, terminal and built-in Help; Telegram login (+ TOTP when 2FA is enabled) |
@@ -415,7 +415,7 @@ Telegram / Mini App  ⇄  bot (unprivileged user stacksentry)
 | `/services` | service state; restart and log next to each |
 | `/panel` | panel and xray availability, versions, updates |
 | `/subs` | subscriptions: expiry, traffic, depleted and disabled |
-| `/history` | hourly CPU/RAM/disk averages for the last day |
+| `/history` | hourly CPU/RAM/disk averages for 24 hours, 7 or 30 days |
 | `/logs` | selected service log with an “errors only” filter |
 | `/audit` | bot action log with “denied / actions” filters |
 | `/maint` | maintenance: `apt`, release upgrade, reboot, allowlisted command |
@@ -612,6 +612,15 @@ over the file.
 | `MEM_CRIT` | memory critical threshold, % |
 | `DISK_WARN` | disk warning threshold, % |
 | `DISK_CRIT` | disk critical threshold, % |
+| `INODE_WARN` | inode warning threshold, % |
+| `INODE_CRIT` | inode critical threshold, % |
+| `CHECK_FAILED_UNITS` | `1`: check failed systemd units |
+| `CHECK_TLS` | `1`: check the panel TLS certificate expiry |
+| `CHECK_BACKUP_PATH` | backup file or directory to check |
+| `CHECK_BACKUP_MAX_AGE_H` | maximum backup age, hours |
+| `CHECK_HTTP_URLS` | external HTTP URLs, comma-separated |
+| `CHECK_DNS_HOSTS` | DNS names, comma-separated |
+| `CHECK_SMART` | `1`: check SMART via smartctl (optional) |
 | `ALERT_HYSTERESIS` | how far a metric must recover before an alert clears, % |
 | `ALERT_CONFIRM_CHECKS` | consecutive checks needed to confirm an alert |
 | `ALERT_RECOVERY_CHECKS` | consecutive checks needed to confirm recovery |
@@ -640,11 +649,13 @@ over the file.
 | `WEBAPP_TERMINAL_ORIGIN` | public HTTPS terminal URL for the tab inside the Mini App |
 | `WEBAPP_SECRET` | cookie signing secret (≥ 32 chars) |
 | `WEBAPP_SESSION_TTL` | Mini App session lifetime, seconds |
+| `WEBAPP_METRICS_TOKEN` | Bearer token for `/metrics` (empty: public) |
 | `COMMAND_TIMEOUT` | allowlisted command timeout, seconds |
 | `COMMAND_ALLOWLIST` | safe diagnostic commands (aliases, see above) |
 | `STATE_PATH` | SQLite database |
 | `LOG_PATH` | log file |
 | `LOG_LEVEL` | `DEBUG` / `INFO` / `WARNING` / `ERROR` |
+| `LOG_JSON` | `1`: emit one-line JSON logs for journald/aggregators |
 | `SUDO_WRAPPER` | path to `stacksentry-ctl` |
 
 ### Where alerts go
@@ -852,6 +863,13 @@ The terminal uses a separate TOTP secret and asks for a code for every session.
 
 Service resources are limited (`MemoryMax=256M`, `TasksMax=64`), command output is
 truncated (16 KB) and has a timeout.
+
+## Self-diagnostics
+
+```bash
+sudo stacksentry-doctor              # config, database, services, panel
+sudo stacksentry-doctor --no-network # skip panel requests
+```
 
 ## Update and removal
 

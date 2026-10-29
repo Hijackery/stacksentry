@@ -52,8 +52,9 @@ jobs:
           bash -n install.sh
           bash -n install/stacksentry-ctl
           bash -n install/stacksentry-menu
+          bash -n install/stacksentry-doctor
           sh -n install/stacksentry-bot.init
-          shellcheck install.sh install/stacksentry-ctl install/stacksentry-menu
+          shellcheck install.sh install/stacksentry-ctl install/stacksentry-menu install/stacksentry-doctor
 
       - name: Синтаксис sudoers
         run: sudo visudo -cf install/stacksentry-sudoers

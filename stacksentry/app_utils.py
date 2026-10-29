@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import logging
 import os
 import re
@@ -63,12 +64,30 @@ class _ScrubbingFormatter(logging.Formatter):
         #: Короткие значения не вырезаем, чтобы не портить обычный текст.
         self._secrets = tuple(secret for secret in secrets if len(secret) >= 8)
 
-    def format(self, record: logging.LogRecord) -> str:
-        text = super().format(record)
+    def _scrub(self, text: str) -> str:
         text = _BOT_TOKEN_IN_URL.sub("bot<redacted>", text)
         for secret in self._secrets:
             text = text.replace(secret, "***")
         return text
+
+    def format(self, record: logging.LogRecord) -> str:
+        return self._scrub(super().format(record))
+
+
+class _JsonScrubbingFormatter(_ScrubbingFormatter):
+    """JSON-лог для journald/agregator: одна строка на запись, без секретов."""
+
+    def format(self, record: logging.LogRecord) -> str:
+        payload: dict[str, object] = {
+            "ts": time.strftime("%Y-%m-%dT%H:%M:%S", time.gmtime(record.created))
+            + f".{int(record.msecs):03d}Z",
+            "level": record.levelname,
+            "logger": record.name,
+            "message": record.getMessage(),
+        }
+        if record.exc_info:
+            payload["exception"] = self.formatException(record.exc_info)
+        return self._scrub(json.dumps(payload, ensure_ascii=False))
 
 
 def _safe_endpoint(url: str) -> str:

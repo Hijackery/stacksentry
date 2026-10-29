@@ -258,6 +258,19 @@ def log_variants_menu(base: str) -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(rows)
 
 
+def history_menu(hours: int = 24) -> InlineKeyboardMarkup:
+    rows: list[list[InlineKeyboardButton]] = []
+    buttons = []
+    for value, label in ((24, "24 часа"), (168, "7 дней"), (720, "30 дней")):
+        prefix = "• " if value == hours else ""
+        buttons.append(
+            InlineKeyboardButton(f"{prefix}{label}", callback_data=f"history:{value}")
+        )
+    rows.append(buttons)
+    rows.append([home_button()])
+    return InlineKeyboardMarkup(rows)
+
+
 def logs_menu(units: tuple[str, ...]) -> InlineKeyboardMarkup:
     buttons = [
         [InlineKeyboardButton(f"📜 {unit}", callback_data=f"logs:{unit}")]
@@ -372,13 +385,12 @@ def log_view_menu(unit: str) -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(
         [
             [
+                InlineKeyboardButton("🔎 Поиск", callback_data=f"logsearch:{unit}"),
                 InlineKeyboardButton(
-                    "🔎 Только ошибки", callback_data=f"logs_err:{unit}"
-                ),
-                InlineKeyboardButton(
-                    "📜 Ещё 200 строк", callback_data=f"logs200:{unit}"
+                    "❌ Только ошибки", callback_data=f"logs_err:{unit}"
                 ),
             ],
+            [InlineKeyboardButton("📜 Ещё 200 строк", callback_data=f"logs200:{unit}")],
             [
                 InlineKeyboardButton("🔙 Сервисы", callback_data="services"),
                 home_button(),

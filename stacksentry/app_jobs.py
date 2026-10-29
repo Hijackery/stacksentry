@@ -6,6 +6,7 @@ import asyncio
 import logging
 import sqlite3
 import time
+from dataclasses import replace
 from datetime import timedelta
 
 from telegram import Message
@@ -600,6 +601,12 @@ class JobsMixin(BotBase):
             logger.exception("Плановый сбор не удался")
             return
 
+        forecast = await asyncio.to_thread(self.storage.disk_forecast_days)
+        if snapshot.system is not None and forecast is not None:
+            snapshot = replace(
+                snapshot,
+                system=replace(snapshot.system, disk_forecast_days=forecast),
+            )
         self._snapshot = snapshot
         self._snapshot_at = time.monotonic()
 

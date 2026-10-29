@@ -16,6 +16,37 @@
     ["help", "Помощь"],
   ];
 
+  function readPins() {
+    try {
+      const saved = JSON.parse(localStorage.getItem("stacksentry.pins") || "[]");
+      return new Set(Array.isArray(saved) ? saved.filter((item) => typeof item === "string") : []);
+    } catch (_) {
+      return new Set();
+    }
+  }
+
+  function savePins() {
+    try {
+      localStorage.setItem("stacksentry.pins", JSON.stringify([...state.pins]));
+    } catch (_) { /* приватный режим: закладки живут до перезагрузки */ }
+  }
+
+  function readDashboard() {
+    const defaults = { services: true, panel: true, checks: true };
+    try {
+      const saved = JSON.parse(localStorage.getItem("stacksentry.dashboard") || "{}");
+      return { ...defaults, ...(saved && typeof saved === "object" ? saved : {}) };
+    } catch (_) {
+      return defaults;
+    }
+  }
+
+  function saveDashboard() {
+    try {
+      localStorage.setItem("stacksentry.dashboard", JSON.stringify(state.dashboard));
+    } catch (_) { /* не критично */ }
+  }
+
   const requestedTab = hash.get("tab") || "overview";
   const initialTab = BASE_TABS.some(([key]) => key === requestedTab)
     ? requestedTab
@@ -35,6 +66,9 @@
     loading: false,
     historyHours: 24,
     historyToken: 0,
+    pins: readPins(),
+    dashboard: readDashboard(),
+    dashboardOpen: false,
     subsQuery: "",
     subsSort: "usage",
     timer: null,
@@ -204,6 +238,18 @@
     return `<div class="quick"><span>${esc(label)}</span><strong>${esc(value)}</strong></div>`;
   }
 
+  function renderChecks(s) {
+    const checks = s.checks || [];
+    if (!checks.length) return "";
+    const tone = checks.some((item) => item.severity === "critical") ? "bad" : "warn";
+    return `<div class="notice ${tone}">
+      <span class="notice-icon">${ICONS[tone]}</span>
+      <div><strong>Дополнительные проверки</strong>
+        <ul>${checks.slice(0, 8).map((item) => `<li>${esc(item.title)}: ${esc(item.detail)}</li>`).join("")}</ul>
+      </div>
+    </div>`;
+  }
+
   function renderNotices(s) {
     const warnings = (s.warnings || []).filter(Boolean);
     if (warnings.length) {
@@ -228,6 +274,10 @@
   }
 
   function serviceRow(item) {
+    const pinned = state.pins.has(item.name);
+    const pin = `<button class="pin-button${pinned ? " active" : ""}" type="button"
+      data-pin="${esc(item.name)}" aria-label="${pinned ? "Убрать закладку" : "Закрепить службу"}"
+      aria-pressed="${pinned}">★</button>`;
     const details = [];
     if (item.sub_state) details.push(item.sub_state);
     if (item.since) details.push(`с ${item.since}`);
@@ -239,13 +289,21 @@
         <span class="row-title">${esc(item.name)}</span>
         <span class="row-sub">${esc(details.join(" · ") || "—")}</span>
       </div>
+      ${pin}
       <span class="chip ${item.active ? "ok" : "bad"}">${esc(item.active_state || item.sub_state || "—")}</span>
     </div>`;
   }
 
+  function orderedServices() {
+    return [...(state.snapshot.services || [])].sort((a, b) => {
+      const pinned = Number(state.pins.has(b.name)) - Number(state.pins.has(a.name));
+      if (pinned) return pinned;
+      return Number(a.active) - Number(b.active);
+    });
+  }
+
   function serviceRows(limit) {
-    const services = state.snapshot.services || [];
-    return services.slice(0, limit).map(serviceRow).join("");
+    return orderedServices().slice(0, limit).map(serviceRow).join("");
   }
 
   function panelPreview() {
@@ -280,11 +338,19 @@
       renderMetric("CPU", fmtPercent(system.cpu_percent), system.cpu_percent, `load avg ${Number(system.load1 || 0).toFixed(2)}`),
       renderMetric("RAM", fmtPercent(system.mem_percent), system.mem_percent, `${fmtBytes(system.mem_total_bytes * system.mem_percent / 100)} из ${fmtBytes(system.mem_total_bytes)}`),
       renderMetric("Диск", fmtPercent(system.disk_percent), system.disk_percent, `${fmtBytes(system.disk_free_bytes)} свободно`),
+      renderMetric("Inode", system.inode_percent > 0 ? fmtPercent(system.inode_percent) : "—", system.inode_percent, system.disk_forecast_days != null ? `диск ~${Math.round(system.disk_forecast_days)} дн.` : "файлы и inode"),
     ] : [
       renderMetric("CPU", "—", 0, "нет данных"),
       renderMetric("RAM", "—", 0, "нет данных"),
       renderMetric("Диск", "—", 0, "нет данных"),
     ];
+    const settings = state.dashboard;
+    const dashboardPanel = state.dashboardOpen
+      ? `<section class="card dashboard-settings">
+          <div class="card-head"><h2>Настроить дашборд</h2></div>
+          ${[["services", "Службы"], ["checks", "Проверки"], ["panel", "Панель"]].map(([key, label]) => `<label class="check-row"><input type="checkbox" data-dash="${key}" ${settings[key] ? "checked" : ""}> ${label}</label>`).join("")}
+        </section>`
+      : "";
     return [
       renderHero(verdict.tone, verdict.title, heroText),
       `<div class="stat-grid">${metrics.join("")}</div>`,
@@ -293,13 +359,16 @@
         ${renderQuick("Трафик", fmtBytes(s.total_used_bytes))}
         ${renderQuick("Службы", `${activeServices}/${services.length}`)}
       </div>`,
-      renderNotices(s),
-      `<section class="card">
+      `<div class="dashboard-bar"><span class="hint">Дашборд</span><button class="link-button" type="button" data-dashboard-toggle>${state.dashboardOpen ? "Готово" : "⚙️ Настроить"}</button></div>`,
+      dashboardPanel,
+      settings.checks ? renderNotices(s) : "",
+      settings.checks ? renderChecks(s) : "",
+      settings.services ? `<section class="card">
         <div class="card-head"><h2>Службы</h2><span class="chip ${activeServices === services.length && services.length ? "ok" : "warn"}">${activeServices}/${services.length}</span></div>
         <div class="list">${services.length ? serviceRows(6) : '<div class="hint">Службы не настроены.</div>'}</div>
         ${services.length > 6 ? '<button class="link-button" type="button" data-nav="services">Все службы</button>' : ""}
-      </section>`,
-      panelPreview(),
+      </section>` : "",
+      settings.panel ? panelPreview() : "",
     ].filter(Boolean).join("");
   }
 
@@ -380,11 +449,11 @@
 
   function renderHelp() {
     const cards = [
-      ["Обзор", "Вердикт по серверу, CPU/RAM/диск, клиенты и трафик. Данные обновляются автоматически; кнопка «Обновить» перезапрашивает снимок."],
+      ["Обзор", "Вердикт по серверу, CPU/RAM/диск, клиенты и трафик. Звёздочка закрепляет службу, «⚙️ Настроить» скрывает лишние блоки. Кнопка «Обновить» перезапрашивает снимок."],
       ["Службы", "Статус systemd-служб и панели. Если служба не работает — откройте её в боте и посмотрите журнал."],
       ["Панель", "Доступность API панели, версия и состояние xray. Если API не настроен, раздел честно скажет об этом."],
       ["Трафик и подписки", "Inbound'ы, клиенты, остаток трафика и сроки подписок. В «Подписках» есть поиск и сортировка."],
-      ["История", "Средние CPU/RAM/диска за 24 часа или 7 дней."],
+      ["История", "Средние CPU/RAM/диска за 24 часа, 7 или 30 дней, p95 и пики."],
       ["Терминал", "Появляется, только если включён веб-терминал. Это отдельная сессия со своим TOTP; при первом открытии введите код."],
       ["2FA", "Если 2FA включена при установке, вход в Mini App требует 6-значный код, а опасные действия в боте — подтверждение. Если 2FA выключена, TOTP не запрашивается нигде. Секрет и QR: <code>sudo stacksentry-menu totp</code>."],
       ["Бот", "Команды: <code>/status</code>, <code>/subs</code>, <code>/traffic</code>, <code>/history</code>, <code>/maint</code>, <code>/help</code>. Опасные действия — только в личке администратора."],
@@ -401,7 +470,7 @@
 
   function renderServices() {
     const s = state.snapshot;
-    const services = s.services || [];
+    const services = orderedServices();
     const active = services.filter((item) => item.active).length;
     const unavailable = s.unavailable && s.unavailable.includes("services");
     let heroTone = "ok";
@@ -648,12 +717,14 @@
     const current = values[values.length - 1];
     const average = values.reduce((sum, value) => sum + value, 0) / values.length;
     const maximum = Math.max(...values);
-    const description = `${label}: сейчас ${fmtPercent(current)}, среднее ${fmtPercent(average)}, максимум ${fmtPercent(maximum)}`;
+    const sorted = [...values].sort((a, b) => a - b);
+    const p95 = sorted[Math.min(sorted.length - 1, Math.floor(sorted.length * 0.95))];
+    const description = `${label}: сейчас ${fmtPercent(current)}, среднее ${fmtPercent(average)}, p95 ${fmtPercent(p95)}, максимум ${fmtPercent(maximum)}`;
     return `<section class="card chart-card">
       <div class="card-head"><h2>${esc(label)}</h2><span class="chip ${tone(current)}">${fmtPercent(current)}</span></div>
       <div class="chart" role="img" aria-label="${esc(description)}">${bars.map((value) => `<i style="height:${clamp(value, 2, 100)}%"></i>`).join("")}</div>
       <div class="chart-axis"><span>${esc(bucketLabel(rows[0].bucket, hours))}</span><span>${esc(bucketLabel(rows[rows.length - 1].bucket, hours))}</span></div>
-      <div class="chart-stats"><span>сейчас ${fmtPercent(current)}</span><span>сред. ${fmtPercent(average)}</span><span>макс. ${fmtPercent(maximum)}</span></div>
+      <div class="chart-stats"><span>сейчас ${fmtPercent(current)}</span><span>сред. ${fmtPercent(average)}</span><span>p95 ${fmtPercent(p95)}</span><span>макс. ${fmtPercent(maximum)}</span></div>
     </section>`;
   }
 
@@ -674,10 +745,11 @@
   }
 
   function renderHistoryShell() {
-    const hours = state.historyHours === 168 ? 168 : 24;
+    const hours = [24, 168, 720].includes(state.historyHours) ? state.historyHours : 24;
     return `<div class="segmented" role="group" aria-label="Период истории">
         <button type="button" data-hours="24" class="${hours === 24 ? "active" : ""}">24 часа</button>
         <button type="button" data-hours="168" class="${hours === 168 ? "active" : ""}">7 дней</button>
+        <button type="button" data-hours="720" class="${hours === 720 ? "active" : ""}">30 дней</button>
       </div>
       <div id="history-body" class="skeleton-stack" aria-busy="true">
         <div class="skeleton-card"></div><div class="skeleton-card"></div><div class="skeleton-card"></div>
@@ -693,7 +765,7 @@
     body.setAttribute("aria-busy", "true");
     body.innerHTML = '<div class="skeleton-card"></div><div class="skeleton-card"></div><div class="skeleton-card"></div>';
     try {
-      const rows = await api(`/api/history?hours=${hours === 168 ? 168 : 24}`);
+      const rows = await api(`/api/history?hours=${hours}`);
       if (token !== state.historyToken || state.active !== "history") return;
       renderHistoryBody(rows, hours);
     } catch (error) {
@@ -1060,6 +1132,21 @@
   });
 
   view.addEventListener("click", (event) => {
+    if (event.target.closest("[data-dashboard-toggle]")) {
+      state.dashboardOpen = !state.dashboardOpen;
+      render();
+      return;
+    }
+    const pin = event.target.closest("[data-pin]");
+    if (pin) {
+      const name = pin.dataset.pin || "";
+      if (!name) return;
+      if (state.pins.has(name)) state.pins.delete(name);
+      else state.pins.add(name);
+      savePins();
+      render();
+      return;
+    }
     const nav = event.target.closest("[data-nav]");
     if (nav) {
       switchTab(nav.dataset.nav);
@@ -1075,7 +1162,8 @@
     }
     const hours = event.target.closest("[data-hours]");
     if (hours) {
-      state.historyHours = Number(hours.dataset.hours) === 168 ? 168 : 24;
+      const requested = Number(hours.dataset.hours);
+      state.historyHours = [24, 168, 720].includes(requested) ? requested : 24;
       render();
     }
   });
@@ -1088,6 +1176,16 @@
   });
 
   view.addEventListener("change", (event) => {
+    const dash = event.target.closest("[data-dash]");
+    if (dash) {
+      const key = dash.dataset.dash;
+      if (key in state.dashboard) {
+        state.dashboard[key] = Boolean(dash.checked);
+        saveDashboard();
+        render();
+      }
+      return;
+    }
     if (event.target.id === "subs-sort") {
       state.subsSort = event.target.value;
       state.subsQuery = (($("subs-search") || {}).value || "");

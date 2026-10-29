@@ -5,11 +5,13 @@ from __future__ import annotations
 import asyncio
 import logging
 
+from .collectors.health import HealthCollector
 from .collectors.panels import build_panel
 from .collectors.services import ServiceCollector
 from .collectors.subscriptions import SubscriptionCollector
 from .collectors.system import SystemCollector
 from .models import (
+    HealthCheck,
     InboundSummary,
     MonitorSnapshot,
     PanelHealth,
@@ -67,6 +69,7 @@ class Monitor:
         self.services = ServiceCollector(settings.services)
         self.panel = build_panel(settings)
         self.subscriptions = SubscriptionCollector(self.panel)
+        self.health = HealthCollector(settings)
 
     async def close(self) -> None:
         await self.panel.close()
@@ -78,15 +81,23 @@ class Monitor:
         metrics_unavailable: set[str] = set()
         services_unavailable: set[str] = set()
         panel_unavailable: set[str] = set()
+        checks_warnings: list[str] = []
+        checks_unavailable: set[str] = set()
 
-        metrics, services, panel_bundle = await asyncio.gather(
+        metrics, services, panel_bundle, checks = await asyncio.gather(
             self._collect_metrics(metrics_warnings, metrics_unavailable),
             self._collect_services(services_warnings, services_unavailable),
             self._collect_panel_bundle(panel_warnings, panel_unavailable),
+            self._collect_checks(checks_warnings, checks_unavailable),
         )
         health, inbounds, subs = panel_bundle
 
-        warnings = [*metrics_warnings, *services_warnings, *panel_warnings]
+        warnings = [
+            *metrics_warnings,
+            *services_warnings,
+            *panel_warnings,
+            *checks_warnings,
+        ]
         if subs or inbounds:
             warnings.extend(
                 SubscriptionCollector.problems(
@@ -103,11 +114,26 @@ class Monitor:
             panel=health,
             inbounds=inbounds,
             subscriptions=subs,
+            checks=checks,
             warnings=warnings,
             unavailable=frozenset(
-                metrics_unavailable | services_unavailable | panel_unavailable
+                metrics_unavailable
+                | services_unavailable
+                | panel_unavailable
+                | checks_unavailable
             ),
         )
+
+    async def _collect_checks(
+        self, warnings: list[str], unavailable: set[str]
+    ) -> list[HealthCheck]:
+        try:
+            return await self.health.collect()
+        except Exception as exc:
+            _log_collector_error("checks", "Дополнительные проверки упали", exc)
+            warnings.append(f"дополнительные проверки недоступны: {exc}")
+            unavailable.add("checks")
+            return []
 
     async def _collect_panel_bundle(
         self, warnings: list[str], unavailable: set[str]

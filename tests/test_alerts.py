@@ -6,10 +6,12 @@ from collections.abc import Callable
 
 from stacksentry.alerts import AlertEngine, Rule
 from stacksentry.models import (
+    HealthCheck,
     InboundSummary,
     MonitorSnapshot,
     PanelHealth,
     ServiceStatus,
+    Severity,
     Subscription,
     SystemMetrics,
 )
@@ -71,6 +73,7 @@ def snapshot(
     subscriptions: list[Subscription] | None = None,
     inbounds: list[InboundSummary] | None = None,
     unavailable: frozenset[str] = frozenset(),
+    checks: list[HealthCheck] | None = None,
 ) -> MonitorSnapshot:
     return MonitorSnapshot(
         system=system,
@@ -78,6 +81,7 @@ def snapshot(
         panel=panel_health if panel_health is not None else panel(),
         inbounds=inbounds if inbounds is not None else [],
         subscriptions=subscriptions or [],
+        checks=checks or [],
         warnings=warnings or [],
         unavailable=unavailable,
     )
@@ -174,6 +178,46 @@ def test_recovery_notification(
     state = storage.get_alert_state("cpu")
     assert state is not None
     assert state["state"] == "ok"
+
+
+def test_inode_threshold_and_health_checks(
+    make_settings: Callable[..., Settings], storage: Storage
+) -> None:
+    alerts = engine(make_settings, storage)
+    inode = alerts.evaluate(
+        snapshot(
+            SystemMetrics(
+                cpu_percent=5.0,
+                mem_percent=10.0,
+                mem_total_bytes=1024**3,
+                swap_percent=0.0,
+                disk_percent=10.0,
+                disk_free_bytes=10**9,
+                load1=0.1,
+                uptime_seconds=100.0,
+                tcp_connections=1,
+                net_sent_bytes=0,
+                net_recv_bytes=0,
+                inode_percent=96.0,
+            )
+        )
+    )
+    assert any(finding.key == "inode" for finding in inode)
+
+    checked = alerts.evaluate(
+        snapshot(
+            metrics(5.0),
+            checks=[
+                HealthCheck(
+                    "check:backup",
+                    Severity.warning,
+                    "Бэкап устарел",
+                    "48 ч",
+                )
+            ],
+        )
+    )
+    assert any(finding.rule is Rule.check for finding in checked)
 
 
 def test_dead_service_is_critical(

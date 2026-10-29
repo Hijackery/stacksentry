@@ -4,11 +4,15 @@ from __future__ import annotations
 
 import asyncio
 import json
+import os
+import subprocess
 import time
 from collections.abc import Callable
+from pathlib import Path
 
 import pytest
 
+from stacksentry.collectors.health import HealthCollector
 from stacksentry.collectors.services import ServiceCollector, _parse_properties
 from stacksentry.collectors.subscriptions import SubscriptionCollector
 from stacksentry.command import run_command
@@ -297,6 +301,40 @@ def test_missing_unit_is_reported(
 ) -> None:
     settings: Settings = make_settings()
     assert settings.services  # конфигурация услуг не пустая
+
+
+async def test_health_checks_failed_units_and_stale_backup(
+    make_settings: Callable[..., Settings],
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    backup = tmp_path / "backup.tar.gz"
+    backup.write_bytes(b"x")
+    old = time.time() - 3 * 3600
+    os.utime(backup, (old, old))
+    settings = make_settings(
+        check_failed_units=True,
+        check_tls=False,
+        check_backup_path=str(backup),
+        check_backup_max_age_h=1,
+        check_http_urls=(),
+        check_dns_hosts=(),
+        check_smart=False,
+    )
+
+    def fake_run(
+        argv: list[str], **_kwargs: object
+    ) -> subprocess.CompletedProcess[str]:
+        return subprocess.CompletedProcess(
+            argv, 0, "x-ui.service loaded failed failed\n", ""
+        )
+
+    monkeypatch.setattr("stacksentry.collectors.health.subprocess.run", fake_run)
+    checks = await HealthCollector(settings).collect()
+    keys = {check.key for check in checks}
+
+    assert "check:failed_units" in keys
+    assert "check:backup" in keys
 
 
 async def test_monitor_only_panel_health(

@@ -80,6 +80,9 @@ from .app_utils import (
     _user_id,
 )
 from .app_utils import (
+    _JsonScrubbingFormatter as _JsonScrubbingFormatter,
+)
+from .app_utils import (
     _parse_apt_status as _parse_apt_status,
 )
 from .app_utils import (
@@ -129,6 +132,8 @@ class MonitorBot(CommandMixin, JobsMixin):
         #: переживает рестарт бота.
         self._last_screen: dict[int, int] = {}
         self._screen_locks: dict[int, asyncio.Lock] = {}
+        #: Кто сейчас ищет строку в журнале: user_id -> unit.
+        self._log_searches: dict[int, str] = {}
         #: Step-up 2FA: ожидание кода, неудачи и блокировка после перебора.
         self._totp_replay = ReplayGuard(ttl=120.0, claim=self.storage.claim_replay)
         self._totp_failures: dict[int, list[float]] = {}
@@ -431,6 +436,8 @@ class MonitorBot(CommandMixin, JobsMixin):
         await self._answer(query)
         data = query.data
         user_id = query.from_user.id
+        # Любая кнопка отменяет незавершённый поиск по журналу.
+        self._log_searches.pop(user_id, None)
 
         # Команды и кнопки — только в личном чате (см. _chat_allowed).
         message = query.message
@@ -579,13 +586,17 @@ class MonitorBot(CommandMixin, JobsMixin):
             text, markup = await self._subs_view(offset)
             await self._edit(query, text, markup=markup)
         elif data == "history":
-            rows = await asyncio.to_thread(
-                self.storage.get_series, time.time() - 24 * 3600, 24
+            await self._edit(
+                query, await self._history_text(24), markup=ui.history_menu(24)
             )
+        elif data.startswith("history:"):
+            hours = int(data[8:]) if data[8:].isdigit() else 24
+            if hours not in {24, 168, 720}:
+                hours = 24
             await self._edit(
                 query,
-                ui.render_history(rows, title="Последние 24 часа"),
-                markup=self._main_menu(user_id),
+                await self._history_text(hours),
+                markup=ui.history_menu(hours),
             )
         elif data == "logs_menu":
             await self._edit(
@@ -635,6 +646,8 @@ class MonitorBot(CommandMixin, JobsMixin):
                     package_manager=self.platform.package_manager
                 ),
             )
+        elif data.startswith("logsearch:"):
+            await self._prompt_log_search(query, data[10:])
         elif data.startswith("logs:"):
             await self._show_logs(query, data[5:])
         elif data.startswith("logs200:"):
@@ -1088,6 +1101,12 @@ class MonitorBot(CommandMixin, JobsMixin):
                 logger.debug("Не удалось удалить сообщение с кодом: %s", exc)
             await self._complete_2fa(message, user.id, code)
             return
+        pending_search = self._log_searches.pop(user.id, None)
+        if pending_search is not None:
+            await self._run_log_search(
+                message, user.id, pending_search, message.text or ""
+            )
+            return
         command = " ".join((message.text or "").split())
         if not command:
             return
@@ -1104,6 +1123,65 @@ class MonitorBot(CommandMixin, JobsMixin):
                 f"Разрешено: <code>{ui.esc(listed)}</code>",
                 markup=self._main_menu(True),
             )
+
+    async def _prompt_log_search(self, callback: CallbackQuery, unit: str) -> None:
+        if not self.is_admin(callback.from_user.id):
+            await self._edit(callback, "⛔ Только для администраторов.")
+            return
+        if not unit:
+            await self._edit(
+                callback,
+                "Не выбран журнал.",
+                markup=ui.logs_menu(self.settings.services),
+            )
+            return
+        self._log_searches[callback.from_user.id] = unit
+        await self._edit(
+            callback,
+            f"🔎 <b>Поиск в журнале</b> <code>{ui.esc(unit)}</code>\n\n"
+            "Пришлите текст для поиска. Любая кнопка отменит поиск.",
+            markup=ui.log_view_menu(unit),
+        )
+
+    async def _run_log_search(
+        self, message: Message, user_id: int, unit: str, query: str
+    ) -> None:
+        needle = " ".join(query.split())
+        if not needle:
+            await self._reply_screen(
+                message,
+                "Пустой запрос. Поиск отменён.",
+                markup=ui.log_view_menu(unit),
+            )
+            return
+        wait = self._heavy_wait(user_id)
+        if wait > 0:
+            await self._reply_screen(
+                message,
+                f"Журнал: следующий запрос через {wait:.0f} с",
+                markup=ui.log_view_menu(unit),
+            )
+            return
+        try:
+            output = await self.actions.journal(unit, 200, errors=False)
+        except ActionError as exc:
+            await self._reply_screen(
+                message, f"❌ {ui.esc(str(exc))}", markup=ui.log_view_menu(unit)
+            )
+            return
+        lines = [line for line in output.splitlines() if needle.lower() in line.lower()]
+        if not lines:
+            text = (
+                f"🔎 По запросу <code>{ui.esc(needle)}</code> ничего не найдено "
+                f"в <code>{ui.esc(unit)}</code>."
+            )
+        else:
+            body = "\n".join(lines[-80:])
+            text = (
+                f"🔎 <b>{ui.esc(unit)}</b> · найдено {len(lines)}\n"
+                f"<pre>{ui.esc(body[-3000:])}</pre>"
+            )
+        await self._reply_screen(message, text, markup=ui.log_view_menu(unit))
 
     async def _prompt_command(
         self,
@@ -1187,16 +1265,19 @@ def _setup_logging(settings: Settings) -> None:
     )
     # Поверх всех обработчиков — вырезаем секреты из готовых строк (включая
     # трейсбеки): токен бота из URL и точные значения токенов из конфигурации.
-    formatter = _ScrubbingFormatter(
-        "%(asctime)s %(levelname)-8s %(name)s: %(message)s",
-        (
-            settings.telegram_token,
-            settings.panel_api_token,
-            settings.panel_password,
-            settings.panel_url,
-            settings.totp_secret,
-            settings.webapp_secret,
-        ),
+    log_format = "%(asctime)s %(levelname)-8s %(name)s: %(message)s"
+    secrets = (
+        settings.telegram_token,
+        settings.panel_api_token,
+        settings.panel_password,
+        settings.panel_url,
+        settings.totp_secret,
+        settings.webapp_secret,
+    )
+    formatter = (
+        _JsonScrubbingFormatter(log_format, secrets)
+        if settings.log_json
+        else _ScrubbingFormatter(log_format, secrets)
     )
     for handler in handlers:
         handler.setFormatter(formatter)
