@@ -145,7 +145,7 @@ def main_menu(
             [
                 InlineKeyboardButton(
                     "📱 Открыть Mini App",
-                    web_app=WebAppInfo(url=settings.webapp_public_origin),
+                    web_app=WebAppInfo(url=settings.webapp_url),
                 )
             ]
         )

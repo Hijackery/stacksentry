@@ -513,7 +513,7 @@ async def test_post_init_sets_webapp_menu_button(
     setter.assert_awaited_once()
     assert setter.await_args is not None
     menu = setter.await_args.kwargs["menu_button"]
-    assert menu.web_app.url == "https://sentry.example.com"
+    assert menu.web_app.url.startswith("https://sentry.example.com?v=")
 
 
 async def test_post_init_skips_webapp_menu_button_when_disabled(

@@ -1428,6 +1428,8 @@
       const meta = await api("/api/meta");
       state.metaLoaded = true;
       state.version = meta.version || "";
+      const build = $("build");
+      if (build) build.textContent = state.version ? `v${state.version}` : "";
       state.terminalOrigin = meta.terminal_origin || "";
       state.tabs = state.terminalOrigin
         ? [...BASE_TABS, ["terminal", "Терминал"]]

@@ -350,7 +350,7 @@ def test_main_menu_has_inline_mini_app_for_admins(
     mini = next((b for b in buttons if b.text == "📱 Открыть Mini App"), None)
     assert mini is not None
     assert mini.web_app is not None
-    assert mini.web_app.url == "https://sentry.example.com"
+    assert mini.web_app.url.startswith("https://sentry.example.com?v=")
     # Гостям и без публичного origin кнопка не показывается.
     guest = [
         b.text

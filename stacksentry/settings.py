@@ -14,6 +14,8 @@ from pathlib import Path
 from types import MappingProxyType
 from urllib.parse import urlsplit
 
+from . import __version__
+
 BASE_DIR = Path(__file__).resolve().parent.parent
 
 #: Значение-заглушка из .env.example: с ним бот стартует, но Telegram
@@ -219,6 +221,15 @@ class Settings:
 
     def is_admin(self, telegram_id: int | None) -> bool:
         return telegram_id is not None and telegram_id in self.admin_ids
+
+    @property
+    def webapp_url(self) -> str:
+        """URL Mini App с версией: Telegram не отдаст старый закэшированный UI."""
+        origin = self.webapp_public_origin
+        if not origin:
+            return ""
+        sep = "&" if "?" in origin else "?"
+        return f"{origin}{sep}v={__version__}"
 
     @property
     def panel_enabled(self) -> bool:

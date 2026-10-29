@@ -16,7 +16,7 @@ Tailscale), sends alerts and shows subscriptions. Risky actions (restart, system
 upgrade, reboot) happen only from a confirmed button and only for an
 administrator.
 
-Current version: **1.1.2**. The project is public:
+Current version: **1.1.3**. The project is public:
 [documentation](docs/README.md), [security policy](SECURITY.md). Updates come
 from `main` via the in-bot “Check for updates” button or
 `sudo stacksentry-menu update`; GitHub Releases and tags are not used.

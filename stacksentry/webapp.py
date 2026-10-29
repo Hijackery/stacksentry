@@ -20,7 +20,7 @@ from pathlib import Path
 from typing import Any, cast
 
 from fastapi import Depends, FastAPI, HTTPException, Request, Response
-from fastapi.responses import JSONResponse, PlainTextResponse
+from fastapi.responses import HTMLResponse, JSONResponse, PlainTextResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, ConfigDict, Field
 
@@ -223,8 +223,10 @@ def create_app(
             )
         if request.url.path.startswith("/api/"):
             response.headers["Cache-Control"] = "no-store"
-        elif request.url.path in {"/", "/index.html", "/app.js", "/style.css"}:
-            # После обновления браузер не должен показывать старый интерфейс.
+        elif request.url.path in {"/", "/index.html"}:
+            # HTML не кэшируем совсем: он ссылается на версионированные assets.
+            response.headers["Cache-Control"] = "no-store, max-age=0"
+        elif request.url.path in {"/app.js", "/style.css"}:
             response.headers["Cache-Control"] = "no-cache"
         return response
 
@@ -528,6 +530,20 @@ def create_app(
             }
             for row in rows
         ]
+
+    @app.get("/", response_class=HTMLResponse, include_in_schema=False)
+    async def index() -> HTMLResponse:
+        html = (STATIC_DIR / "index.html").read_text(encoding="utf-8")
+        html = html.replace("__VERSION__", __version__)
+        return HTMLResponse(
+            html,
+            headers={
+                "Cache-Control": "no-store, max-age=0",
+                "Pragma": "no-cache",
+                "Expires": "0",
+                "X-StackSentry-Version": __version__,
+            },
+        )
 
     app.mount("/", StaticFiles(directory=STATIC_DIR, html=True), name="static")
     return app

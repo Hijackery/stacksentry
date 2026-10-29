@@ -257,7 +257,7 @@ class MonitorBot(CommandMixin, JobsMixin):
                 await self.app.bot.set_chat_menu_button(
                     menu_button=MenuButtonWebApp(
                         text="Панель",
-                        web_app=WebAppInfo(url=self.settings.webapp_public_origin),
+                        web_app=WebAppInfo(url=self.settings.webapp_url),
                     )
                 )
             except TelegramError as exc:
@@ -653,7 +653,7 @@ class MonitorBot(CommandMixin, JobsMixin):
                 and self.settings.webapp_enabled
                 and self.settings.webapp_public_origin
             ):
-                webapp_url = self.settings.webapp_public_origin
+                webapp_url = self.settings.webapp_url
             await self._edit(
                 query,
                 ui.render_help(

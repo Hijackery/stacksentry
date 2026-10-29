@@ -9,7 +9,7 @@
   <style>
     html, body { margin: 0; min-height: 100%; background: #0b1118; color: #e9eff7; }
   </style>
-  <link rel="stylesheet" href="/style.css?v=1.1.0">
+  <link rel="stylesheet" href="/style.css?v=__VERSION__">
 </head>
 <body>
   <header class="app-header">
@@ -21,6 +21,7 @@
           <div id="sub" class="status-line" role="status" aria-live="polite">
             <span class="status-dot warn"></span><span>Загрузка…</span>
           </div>
+          <div id="build" class="build"></div>
         </div>
       </div>
       <div class="header-actions">
@@ -52,6 +53,6 @@
 
   <div id="toast" class="toast" role="status" aria-live="polite"></div>
   <noscript>Для StackSentry нужен JavaScript.</noscript>
-  <script src="/app.js?v=1.1.0"></script>
+  <script src="/app.js?v=__VERSION__"></script>
 </body>
 </html>

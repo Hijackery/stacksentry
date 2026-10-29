@@ -14,6 +14,7 @@ from urllib.parse import urlencode
 import pytest
 from fastapi.testclient import TestClient
 
+from stacksentry import __version__
 from stacksentry.models import MonitorSnapshot, PanelHealth, SystemMetrics
 from stacksentry.settings import ConfigError, Settings, load_settings
 from stacksentry.storage import Storage
@@ -245,7 +246,9 @@ def test_metrics_and_health_endpoints(
     client = TestClient(app)
     index = client.get("/")
     assert index.status_code == 200
-    assert index.headers["Cache-Control"] == "no-cache"
+    assert "no-store" in index.headers["Cache-Control"]
+    assert f"/app.js?v={__version__}" in index.text
+    assert f"v{__version__}" in index.text or "__VERSION__" not in index.text
     metrics = client.get("/metrics")
     assert metrics.status_code == 200
     assert "stacksentry_up 1" in metrics.text
