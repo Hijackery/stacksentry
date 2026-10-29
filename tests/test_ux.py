@@ -514,6 +514,16 @@ async def test_previous_screen_is_deleted(bot_app: MonitorBot) -> None:
     assert bot_app.storage.get_screen_message(7) == 102
 
 
+async def test_screen_without_reply_passes_chat_id(bot_app: MonitorBot) -> None:
+    """Фоновые экраны не отвечают на сообщение, но обязаны передать chat_id."""
+    bot = AsyncMock()
+    bot.send_message.return_value = SimpleNamespace(message_id=101)
+
+    await bot_app._show_screen(7, "фон", bot=bot)
+
+    assert bot.send_message.await_args.kwargs["chat_id"] == 7
+
+
 async def test_screen_survives_restart(bot_app: MonitorBot) -> None:
     """После рестарта бот помнит прошлое меню и не оставляет его сиротой."""
     bot = AsyncMock()
