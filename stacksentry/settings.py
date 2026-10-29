@@ -207,6 +207,7 @@ class Settings:
     inode_warn: float = 85.0
     inode_crit: float = 95.0
     check_failed_units: bool = True
+    check_failed_units_ignore: tuple[str, ...] = ("motd-news.service",)
     check_tls: bool = True
     check_backup_path: str = ""
     check_backup_max_age_h: int = 36
@@ -263,6 +264,15 @@ def load_settings(env_file: Path | None = None) -> Settings:
         return _build_settings()
     finally:
         _FILE_VALUES.reset(token)
+
+
+def _failed_units_ignore() -> tuple[str, ...]:
+    raw = env_str("CHECK_FAILED_UNITS_IGNORE", "motd-news.service").strip()
+    if raw.lower() in {"none", "-", "off"}:
+        return ()
+    return tuple(
+        item.strip() for item in raw.replace(";", ",").split(",") if item.strip()
+    )
 
 
 def _build_settings() -> Settings:
@@ -332,6 +342,7 @@ def _build_settings() -> Settings:
         inode_warn=env_float("INODE_WARN", 85.0),
         inode_crit=env_float("INODE_CRIT", 95.0),
         check_failed_units=env_bool("CHECK_FAILED_UNITS", True),
+        check_failed_units_ignore=_failed_units_ignore(),
         check_tls=env_bool("CHECK_TLS", True),
         check_backup_path=env_str("CHECK_BACKUP_PATH").strip(),
         check_backup_max_age_h=env_int("CHECK_BACKUP_MAX_AGE_H", 36, minimum=1),

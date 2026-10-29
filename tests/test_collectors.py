@@ -326,14 +326,20 @@ async def test_health_checks_failed_units_and_stale_backup(
         argv: list[str], **_kwargs: object
     ) -> subprocess.CompletedProcess[str]:
         return subprocess.CompletedProcess(
-            argv, 0, "x-ui.service loaded failed failed\n", ""
+            argv,
+            0,
+            "x-ui.service loaded failed failed\n"
+            "motd-news.service loaded failed failed\n",
+            "",
         )
 
     monkeypatch.setattr("stacksentry.collectors.health.subprocess.run", fake_run)
     checks = await HealthCollector(settings).collect()
     keys = {check.key for check in checks}
 
-    assert "check:failed_units" in keys
+    failed = next(check for check in checks if check.key == "check:failed_units")
+    assert "x-ui.service" in failed.detail
+    assert "motd-news.service" not in failed.detail
     assert "check:backup" in keys
 
 

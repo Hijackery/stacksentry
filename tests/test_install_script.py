@@ -275,6 +275,7 @@ def test_installer_installs_doctor_command() -> None:
     assert "stacksentry-doctor" in text
     script = (BASE_DIR / "install" / "stacksentry-doctor").read_text(encoding="utf-8")
     assert "stacksentry.doctor" in script
+    assert 'PYTHONPATH="$PREFIX' in script
 
 
 def test_installer_keeps_local_copy_for_xui_menu_update() -> None:

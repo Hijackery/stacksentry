@@ -16,7 +16,7 @@ Tailscale), sends alerts and shows subscriptions. Risky actions (restart, system
 upgrade, reboot) happen only from a confirmed button and only for an
 administrator.
 
-Current version: **1.1.1**. The project is public:
+Current version: **1.1.2**. The project is public:
 [documentation](docs/README.md), [security policy](SECURITY.md). Updates come
 from `main` via the in-bot “Check for updates” button or
 `sudo stacksentry-menu update`; GitHub Releases and tags are not used.
@@ -615,6 +615,7 @@ over the file.
 | `INODE_WARN` | inode warning threshold, % |
 | `INODE_CRIT` | inode critical threshold, % |
 | `CHECK_FAILED_UNITS` | `1`: check failed systemd units |
+| `CHECK_FAILED_UNITS_IGNORE` | noisy units, comma-separated; `none` shows all |
 | `CHECK_TLS` | `1`: check the panel TLS certificate expiry |
 | `CHECK_BACKUP_PATH` | backup file or directory to check |
 | `CHECK_BACKUP_MAX_AGE_H` | maximum backup age, hours |

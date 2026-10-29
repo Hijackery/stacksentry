@@ -69,10 +69,11 @@ class HealthCollector:
         proc = await asyncio.to_thread(run)
         if proc is None or proc.returncode != 0:
             return None
+        ignored = set(self.settings.check_failed_units_ignore)
         units = []
         for line in proc.stdout.splitlines():
             parts = line.split()
-            if parts:
+            if parts and parts[0] not in ignored:
                 units.append(parts[0])
         if not units:
             return None

@@ -2,4 +2,6 @@
 # stacksentry-doctor — самодиагностика установки StackSentry.
 set -euo pipefail
 PREFIX="${PREFIX:-/opt/stacksentry}"
+# Пакет не устанавливается в site-packages: запускать можно из любого каталога.
+export PYTHONPATH="$PREFIX${PYTHONPATH:+:$PYTHONPATH}"
 exec "$PREFIX/.venv/bin/python" -m stacksentry.doctor "$@"
