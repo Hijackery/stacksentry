@@ -117,6 +117,9 @@ from .ui_menus import (
 from .ui_menus import (
     version_menu as version_menu,
 )
+from .ui_menus import (
+    web_update_menu as web_update_menu,
+)
 from .ui_render import (
     ordered_subscriptions as ordered_subscriptions,
 )

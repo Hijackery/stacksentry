@@ -247,6 +247,14 @@ def test_scripts_pass_shellcheck(script: Path) -> None:
     assert result.returncode == 0, result.stdout + result.stderr
 
 
+def test_installer_sets_up_webapp_update_spool() -> None:
+    text = (BASE_DIR / "install.sh").read_text(encoding="utf-8")
+    assert '"$STATE_DIR/update"' in text
+    assert "chmod 2770" in text
+    assert "ReadWritePaths=$WEBAPP_HOME $STATE_DIR/update" in text
+    assert "systemd-journal" in text
+
+
 def test_installer_installs_doctor_command() -> None:
     text = (BASE_DIR / "install.sh").read_text(encoding="utf-8")
     assert "DOCTOR_PATH" in text

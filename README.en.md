@@ -16,7 +16,7 @@ Tailscale), sends alerts and shows subscriptions. Risky actions (restart, system
 upgrade, reboot) happen only from a confirmed button and only for an
 administrator.
 
-Current version: **1.0.0**. The project is public:
+Current version: **1.1.0**. The project is public:
 [documentation](docs/README.md), [security policy](SECURITY.md). Updates come
 from `main` via the in-bot “Check for updates” button or
 `sudo stacksentry-menu update`; GitHub Releases and tags are not used.
@@ -671,8 +671,16 @@ group will see them. Commands and buttons still work only in private chat.
 
 A dashboard in Telegram: overview, services, panel, traffic, subscriptions,
 history, terminal (when enabled) and a Help tab with a short guide to every
-section, 2FA, the terminal and updates. Read-only, with no actions and no secrets in
-the browser.
+section, 2FA, the terminal and updates.
+
+Cards and list rows are clickable: a service opens its state and journal, a
+metric opens 24h/7d/30d history with p95 and peaks, a check shows the cause and
+what to do, and a subscription opens the client and traffic. The header has a
+single search across sections, services, and subscriptions.
+
+Updates can be requested from the webapp. The request goes to a shared queue,
+the bot asks for confirmation in Telegram, and 2FA requires a fresh code. The
+webapp then shows stages and progress, surviving a webapp restart.
 
 ```bash
 # fully automatic: public IP -> <ip>.sslip.io -> Caddy -> Let's Encrypt

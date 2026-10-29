@@ -41,7 +41,16 @@ from .app_utils import (
     _split_alerts,
 )
 from .models import Severity
-from .updates import check_for_update
+from .update_spool import (
+    list_requests,
+    prune_statuses,
+    read_json,
+    read_status,
+    remove,
+    valid_id,
+    write_status,
+)
+from .updates import check_for_update, read_install_info
 
 logger = logging.getLogger(__name__)
 
@@ -475,6 +484,135 @@ class JobsMixin(BotBase):
             f"панель: {panel_text}",
         )
 
+    async def _set_web_update_status(
+        self,
+        request_id: str,
+        *,
+        state: str,
+        progress: int,
+        stage: str,
+        detail: str = "",
+    ) -> None:
+        if not valid_id(request_id):
+            return
+        spool = self.settings.update_spool_dir
+        current = await asyncio.to_thread(read_status, spool, request_id) or {}
+        await asyncio.to_thread(
+            write_status,
+            spool,
+            request_id,
+            state=state,
+            progress=progress,
+            stage=stage,
+            detail=detail,
+            target_sha=str(current.get("target_sha", "")),
+            target_version=str(current.get("target_version", "")),
+        )
+
+    async def job_update_requests(self, _context: ContextTypes.DEFAULT_TYPE) -> None:
+        """Превращает запрос из Mini App в подтверждение в Telegram."""
+        spool = self.settings.update_spool_dir
+        requests = await asyncio.to_thread(list_requests, spool, max_age=600.0)
+        for path, payload in requests:
+            request_id = str(payload.get("id", ""))
+            user_id = int(payload.get("user_id", 0) or 0)
+            if not valid_id(request_id) or user_id not in self.settings.admin_ids:
+                await asyncio.to_thread(remove, path)
+                continue
+            meta_key = f"webupdate:{request_id}"
+            sent = await asyncio.to_thread(self.storage.get_meta, meta_key)
+            if sent == "sent":
+                await asyncio.to_thread(remove, path)
+                continue
+            target_version = str(payload.get("target_version", "") or "новая версия")
+            current_version = str(payload.get("current_version", "?"))
+            delivered = await self._notify(
+                user_id,
+                "🔄 <b>Обновление StackSentry из Mini App</b>\n\n"
+                f"Текущая версия: <code>{ui.esc(current_version)}</code>\n"
+                f"Доступна: <code>{ui.esc(target_version)}</code>\n\n"
+                "Подтвердите обновление кнопкой ниже. Бот перезапустится.",
+                markup=ui.web_update_menu(request_id),
+            )
+            if not delivered:
+                logger.warning("Не удалось отправить запрос обновления %s", request_id)
+                continue
+            await asyncio.to_thread(self.storage.set_meta, meta_key, "sent")
+            await self._set_web_update_status(
+                request_id,
+                state="awaiting_confirmation",
+                progress=20,
+                stage="Ожидает подтверждения",
+                detail="Нажмите «Подтвердить» в Telegram.",
+            )
+            await asyncio.to_thread(remove, path)
+
+    async def job_finish_web_updates(self, _context: ContextTypes.DEFAULT_TYPE) -> None:
+        await self._finish_web_updates()
+
+    async def _finish_web_updates(self) -> None:
+        """После рестарта подтверждает, что обновление из Mini App доехало."""
+        spool = self.settings.update_spool_dir
+        try:
+            paths = list(spool.glob("status-*.json"))
+        except OSError:
+            return
+        info = await asyncio.to_thread(read_install_info)
+        now = time.time()
+        for path in paths:
+            payload = await asyncio.to_thread(read_json, path)
+            if payload is None:
+                continue
+            request_id = str(payload.get("id", ""))
+            state = str(payload.get("state", ""))
+            if not valid_id(request_id):
+                continue
+            target = str(payload.get("target_sha", ""))
+            current = info.sha
+            if state in {"running", "installing"}:
+                done = bool(target) and (
+                    current.startswith(target) or target.startswith(current)
+                )
+                if done:
+                    await self._set_web_update_status(
+                        request_id,
+                        state="done",
+                        progress=100,
+                        stage="Обновление установлено",
+                        detail="Бот перезапущен, версия совпадает.",
+                    )
+                elif now - float(payload.get("updated_at", 0) or 0) > 900:
+                    await self._set_web_update_status(
+                        request_id,
+                        state="failed",
+                        progress=0,
+                        stage="Не удалось подтвердить обновление",
+                        detail="Проверьте журнал stacksentry-self-update.",
+                    )
+            elif state in {"queued", "awaiting_confirmation"}:
+                if now - float(payload.get("updated_at", 0) or 0) > 900:
+                    await self._set_web_update_status(
+                        request_id,
+                        state="expired",
+                        progress=0,
+                        stage="Запрос устарел",
+                        detail="Создайте новый запрос из Mini App.",
+                    )
+
+    async def _cancel_web_update(self, request_id: str) -> bool:
+        if not valid_id(request_id):
+            return False
+        await self._set_web_update_status(
+            request_id,
+            state="cancelled",
+            progress=0,
+            stage="Отменено",
+            detail="Обновление не запускалось.",
+        )
+        spool = self.settings.update_spool_dir
+        await asyncio.to_thread(remove, spool / f"request-{request_id}.json")
+        return True
+
     async def job_update_check(self, _context: ContextTypes.DEFAULT_TYPE) -> None:
         """Один раз уведомляет админов о новом commit в main."""
         try:
@@ -648,3 +786,4 @@ class JobsMixin(BotBase):
         await asyncio.to_thread(
             self.storage.prune_alert_outbox, time.time() - 30 * 86400
         )
+        await asyncio.to_thread(prune_statuses, self.settings.update_spool_dir)

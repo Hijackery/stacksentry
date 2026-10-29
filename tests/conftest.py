@@ -23,6 +23,7 @@ def make_settings(tmp_path: Path) -> Callable[..., Settings]:
             "admin_ids": (42,),
             "alert_chat_id": None,
             "state_path": tmp_path / "state.db",
+            "update_spool_dir": tmp_path / "update",
             "log_path": tmp_path / "logs" / "bot.log",
             "log_level": "INFO",
             "panel_url": "https://panel.example.com",

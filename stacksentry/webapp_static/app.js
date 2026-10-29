@@ -59,6 +59,17 @@
     update: null,
     updateAt: 0,
     updateLoading: false,
+    updateRequest: "",
+    updateStatus: null,
+    updateRequesting: false,
+    updateTimer: null,
+    detail: null,
+    searchOpen: false,
+    searchQuery: "",
+    serviceLogs: {},
+    serviceLogsLoading: "",
+    metricHours: 24,
+    metricToken: 0,
     metaLoaded: false,
     terminalOrigin: "",
     authPending: false,
@@ -74,6 +85,8 @@
     timer: null,
   };
 
+  state.updateRequest = readUpdateRequest();
+
   function syncTabHash() {
     const suffix = state.active !== "overview"
       ? `#tab=${encodeURIComponent(state.active)}`
@@ -81,6 +94,21 @@
     if (location.hash !== suffix) {
       history.replaceState(null, "", location.pathname + location.search + suffix);
     }
+  }
+
+  function readUpdateRequest() {
+    try {
+      return localStorage.getItem("stacksentry.updateRequest") || "";
+    } catch (_) {
+      return "";
+    }
+  }
+
+  function saveUpdateRequest(id) {
+    try {
+      if (id) localStorage.setItem("stacksentry.updateRequest", id);
+      else localStorage.removeItem("stacksentry.updateRequest");
+    } catch (_) { /* не критично */ }
   }
 
   const ICONS = {
@@ -225,9 +253,10 @@
     );
   }
 
-  function renderMetric(label, value, percent, note) {
+  function renderMetric(label, value, percent, note, key = "") {
     const width = clamp(percent);
-    return `<div class="metric-card">
+    const meta = key ? ` data-metric="${esc(key)}" tabindex="0" role="button"` : "";
+    return `<div class="metric-card${key ? " clickable" : ""}"${meta}>
       <div class="metric-head"><span>${esc(label)}</span><strong>${esc(value)}</strong></div>
       <div class="meter"><i class="${tone(width)}" style="width:${width}%"></i></div>
       <p>${esc(note)}</p>
@@ -245,7 +274,7 @@
     return `<div class="notice ${tone}">
       <span class="notice-icon">${ICONS[tone]}</span>
       <div><strong>Дополнительные проверки</strong>
-        <ul>${checks.slice(0, 8).map((item) => `<li>${esc(item.title)}: ${esc(item.detail)}</li>`).join("")}</ul>
+        <ul>${checks.slice(0, 8).map((item, index) => `<li data-check="${index}" class="clickable">${esc(item.title)}: ${esc(item.detail)}</li>`).join("")}</ul>
       </div>
     </div>`;
   }
@@ -283,7 +312,7 @@
     if (item.since) details.push(`с ${item.since}`);
     if (Number(item.restarts) > 0) details.push(`рестартов: ${item.restarts}`);
     if (Number(item.memory_bytes) > 0) details.push(fmtBytes(item.memory_bytes));
-    return `<div class="list-row">
+    return `<div class="list-row clickable" data-service="${esc(item.name)}">
       <span class="dot ${item.active ? "ok" : "bad"}"></span>
       <div class="row-main">
         <span class="row-title">${esc(item.name)}</span>
@@ -335,9 +364,9 @@
     const updateLine = `Обновлено ${ago(s.age)} · ${activeServices}/${services.length} служб · ${(s.inbounds || []).length} inbound`;
     const heroText = verdict.tone === "ok" ? updateLine : `${verdict.text} ${updateLine}`;
     const metrics = system ? [
-      renderMetric("CPU", fmtPercent(system.cpu_percent), system.cpu_percent, `load avg ${Number(system.load1 || 0).toFixed(2)}`),
-      renderMetric("RAM", fmtPercent(system.mem_percent), system.mem_percent, `${fmtBytes(system.mem_total_bytes * system.mem_percent / 100)} из ${fmtBytes(system.mem_total_bytes)}`),
-      renderMetric("Диск", fmtPercent(system.disk_percent), system.disk_percent, `${fmtBytes(system.disk_free_bytes)} свободно`),
+      renderMetric("CPU", fmtPercent(system.cpu_percent), system.cpu_percent, `load avg ${Number(system.load1 || 0).toFixed(2)}`, "cpu"),
+      renderMetric("RAM", fmtPercent(system.mem_percent), system.mem_percent, `${fmtBytes(system.mem_total_bytes * system.mem_percent / 100)} из ${fmtBytes(system.mem_total_bytes)}`, "mem"),
+      renderMetric("Диск", fmtPercent(system.disk_percent), system.disk_percent, `${fmtBytes(system.disk_free_bytes)} свободно`, "disk"),
       renderMetric("Inode", system.inode_percent > 0 ? fmtPercent(system.inode_percent) : "—", system.inode_percent, system.disk_forecast_days != null ? `диск ~${Math.round(system.disk_forecast_days)} дн.` : "файлы и inode"),
     ] : [
       renderMetric("CPU", "—", 0, "нет данных"),
@@ -372,7 +401,33 @@
     ].filter(Boolean).join("");
   }
 
+  function renderUpdateProgress() {
+    const status = state.updateStatus || {
+      state: "queued", progress: 5, stage: "Запрос создан",
+      detail: "Ожидаю подтверждения в Telegram.",
+    };
+    const progress = clamp(Number(status.progress) || 0);
+    const terminal = ["done", "failed", "cancelled", "expired", "unknown"].includes(status.state);
+    const tone = status.state === "done" ? "ok" : (terminal ? "bad" : "warn");
+    const chip = status.state === "done" ? "готово" : (terminal ? "остановлено" : "выполняется");
+    const retry = terminal && status.state !== "done"
+      ? '<button class="ghost" type="button" data-request-update>Попробовать снова</button>'
+      : "";
+    return `<section class="card update-card" id="update-card">
+      <div class="card-head"><h2>Обновление StackSentry</h2><span class="chip ${tone}">${esc(chip)}</span></div>
+      <div class="update-progress" role="progressbar" aria-valuemin="0" aria-valuemax="100" aria-valuenow="${Math.round(progress)}" aria-label="Прогресс обновления">
+        <i style="width:${progress}%"></i>
+      </div>
+      <div class="update-status"><strong>${esc(status.stage || "Подготовка")}</strong><span>${Math.round(progress)}%</span></div>
+      ${status.detail ? `<p class="hint">${esc(status.detail)}</p>` : ""}
+      ${status.state === "awaiting_confirmation" ? '<p class="hint">Откройте Telegram и нажмите «✅ Подтвердить». При включённой 2FA потребуется свежий код.</p>' : ""}
+      ${status.state === "done" ? '<p class="hint">Обновление установлено. Обновите страницу, если версия ещё старая.</p>' : ""}
+      ${retry}
+    </section>`;
+  }
+
   function renderUpdateCard() {
+    if (state.updateRequest) return renderUpdateProgress();
     const info = state.update;
     let tone = "warn";
     let chip = "не проверено";
@@ -400,13 +455,17 @@
         ${info.remote_date ? `<div class="kv-row"><span>Последний commit</span><strong>${esc(info.remote_date)}</strong></div>` : ""}
       </div>
       ${info.remote_message ? `<p class="hint">${esc(info.remote_message)}</p>` : ""}
-      <p class="hint">Установка: бот → «❓ Помощь» → «🔄 Проверить обновления», затем «⬆️ Обновить StackSentry».</p>`;
+      <p class="hint">Обновление запускается из webapp, но подтверждается в Telegram. Так привилегированное действие не покидает бота.</p>`;
     } else {
       details = '<p class="hint">Проверьте, есть ли новая версия StackSentry в main.</p>';
     }
+    const install = info && info.update_available === true
+      ? `<button class="primary" type="button" data-request-update ${state.updateRequesting ? "disabled" : ""}>${state.updateRequesting ? "Запрашиваю…" : "⬆️ Обновить через бота"}</button>`
+      : "";
     return `<section class="card update-card" id="update-card">
       <div class="card-head"><h2>Обновления StackSentry</h2><span class="chip ${tone}">${esc(chip)}</span></div>
       ${details}
+      ${install}
       <button class="ghost" type="button" data-check-update ${state.updateLoading ? "disabled" : ""}>${state.updateLoading ? "Проверяю…" : "Проверить обновления"}</button>
     </section>`;
   }
@@ -414,6 +473,13 @@
   function refreshUpdateBanner() {
     const banner = $("update-banner");
     if (!banner) return;
+    if (state.updateRequest) {
+      const status = state.updateStatus || { stage: "Ожидает подтверждения", progress: 5 };
+      banner.hidden = false;
+      banner.innerHTML = `<span><strong>Обновление StackSentry</strong> · ${esc(status.stage || "выполняется")}</span>
+        <button class="link-button" type="button" data-update-help>Прогресс</button>`;
+      return;
+    }
     const info = state.update;
     if (!info || info.update_available !== true) {
       banner.hidden = true;
@@ -431,13 +497,13 @@
     refreshUpdateBanner();
   }
 
-  async function loadUpdate(force = false) {
+  async function loadUpdate(force = false, refresh = false) {
     if (state.updateLoading) return;
     if (!force && state.update && Date.now() - state.updateAt < 60000) return;
     state.updateLoading = true;
     refreshUpdateCard();
     try {
-      state.update = await api("/api/update");
+      state.update = await api(refresh ? "/api/update?force=1" : "/api/update");
     } catch (error) {
       state.update = { error: error.message || "Не удалось проверить обновления." };
     } finally {
@@ -445,6 +511,63 @@
       state.updateLoading = false;
       refreshUpdateCard();
     }
+  }
+
+  async function requestUpdate() {
+    const terminal = state.updateStatus && ["failed", "cancelled", "expired", "unknown"].includes(state.updateStatus.state);
+    if (state.updateRequesting || (state.updateRequest && !terminal)) return;
+    if (terminal) {
+      state.updateRequest = "";
+      state.updateStatus = null;
+      saveUpdateRequest("");
+    }
+    state.updateRequesting = true;
+    refreshUpdateCard();
+    try {
+      const response = await api("/api/update/request", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: "{}",
+      });
+      state.updateRequest = response.id;
+      state.updateStatus = response;
+      saveUpdateRequest(response.id);
+      startUpdatePolling();
+    } catch (error) {
+      showToast(error.message || "Не удалось запросить обновление");
+    } finally {
+      state.updateRequesting = false;
+      refreshUpdateCard();
+    }
+  }
+
+  function startUpdatePolling() {
+    if (state.updateTimer) clearTimeout(state.updateTimer);
+    const poll = async () => {
+      if (!state.updateRequest) return;
+      try {
+        const status = await api(`/api/update/status?request=${encodeURIComponent(state.updateRequest)}`);
+        state.updateStatus = status;
+        refreshUpdateCard();
+        if (status.state === "done") {
+          saveUpdateRequest("");
+          state.update = {
+            ...(state.update || {}),
+            update_available: false,
+            current_version: status.target_version || (state.update || {}).remote_version || "новая",
+          };
+          state.updateRequest = "";
+          refreshUpdateCard();
+          setTimeout(() => loadUpdate(true, true), 1200);
+          return;
+        }
+        if (["failed", "cancelled", "expired", "unknown"].includes(status.state)) {
+          return;
+        }
+      } catch (_) { /* webapp мог перезапускаться, продолжаем опрос */ }
+      state.updateTimer = setTimeout(poll, 2000);
+    };
+    poll();
   }
 
   function renderHelp() {
@@ -604,13 +727,13 @@
     return `${days} дн. · до ${formatDate(Number(item.expiry_time_ms))}`;
   }
 
-  function subRow(item) {
+  function subRow(item, index) {
     const status = subscriptionStatus(item);
     const used = Number(item.used_bytes || 0);
     const total = Number(item.total_bytes || 0);
     const percent = total > 0 ? clamp(used / total * 100) : 0;
     const search = [displayName(item), item.inbound_remark, item.sub_id].join(" ").toLowerCase();
-    return `<div class="sub-row" data-search="${esc(search)}">
+    return `<div class="sub-row clickable" data-search="${esc(search)}" data-sub="${index}">
       <div class="sub-top">
         <div class="row-main">
           <span class="row-title">${esc(displayName(item))}</span>
@@ -679,7 +802,7 @@
           <select id="subs-sort">${options}</select>
         </div>
       </div>
-      <div class="list">${sortedSubs(subscriptions).map(subRow).join("")}</div>
+      <div class="list">${sortedSubs(subscriptions).map((item) => subRow(item, state.snapshot.subscriptions.indexOf(item))).join("")}</div>
       <p id="subs-empty" class="hint" hidden>Ничего не найдено. Измените запрос.</p>
     </section>`;
     if (focused) {
@@ -842,8 +965,190 @@
     }, 12000);
   }
 
+  function openDetail(kind, id) {
+    state.detail = { kind, id };
+    state.searchOpen = false;
+    render();
+    window.scrollTo({ top: 0, behavior: "smooth" });
+  }
+
+  function closeDetail() {
+    state.detail = null;
+    render();
+  }
+
+  function detailBack() {
+    return '<button class="link-button back-link" type="button" data-detail-back>← Назад</button>';
+  }
+
+  function findService(name) {
+    return (state.snapshot.services || []).find((item) => item.name === name);
+  }
+
+  function renderServiceDetail(name) {
+    const item = findService(name);
+    if (!item) return emptyState("Служба не найдена", name, detailBack());
+    const tone = item.active ? "ok" : "bad";
+    const pinned = state.pins.has(item.name);
+    const log = state.serviceLogs[item.name];
+    const logText = log === undefined
+      ? '<div class="hint">Загружаю журнал…</div>'
+      : `<pre class="log-view">${esc(log)}</pre>`;
+    return `${detailBack()}
+      ${renderHero(tone, item.name, item.active ? "Служба работает" : "Служба не работает", true)}
+      <section class="card">
+        <div class="card-head"><h2>Состояние</h2><span class="chip ${tone}">${esc(item.active_state || item.sub_state || "—")}</span></div>
+        <div class="kv">
+          <div class="kv-row"><span>Sub state</span><strong>${esc(item.sub_state || "—")}</strong></div>
+          <div class="kv-row"><span>С какого времени</span><strong>${esc(item.since || "—")}</strong></div>
+          <div class="kv-row"><span>Рестартов</span><strong>${fmtNumber(item.restarts)}</strong></div>
+          <div class="kv-row"><span>Память</span><strong>${fmtBytes(item.memory_bytes)}</strong></div>
+          <div class="kv-row"><span>CPU</span><strong>${fmtPercent(item.cpu_percent)}</strong></div>
+        </div>
+        <button class="ghost" type="button" data-pin="${esc(item.name)}">${pinned ? "Убрать закладку" : "★ В закладки"}</button>
+      </section>
+      <section class="card">
+        <div class="card-head"><h2>Журнал</h2><button class="link-button" type="button" data-service-logs="${esc(item.name)}">Обновить</button></div>
+        <div id="service-log">${logText}</div>
+      </section>`;
+  }
+
+  async function loadServiceLogs(name, force = false) {
+    if (!force && state.serviceLogs[name] !== undefined) return;
+    if (state.serviceLogsLoading === name) return;
+    state.serviceLogsLoading = name;
+    try {
+      const data = await api(`/api/logs?service=${encodeURIComponent(name)}&lines=80`);
+      state.serviceLogs[name] = data.text || "(пусто)";
+    } catch (error) {
+      state.serviceLogs[name] = `Не удалось прочитать журнал: ${error.message || "ошибка"}`;
+    } finally {
+      state.serviceLogsLoading = "";
+      const box = $("service-log");
+      if (box && state.detail && state.detail.kind === "service") {
+        box.innerHTML = `<pre class="log-view">${esc(state.serviceLogs[name])}</pre>`;
+      }
+    }
+  }
+
+  function metricLabel(key) {
+    return { cpu: "CPU", mem: "RAM", disk: "Диск", inode: "Inode" }[key] || key;
+  }
+
+  function renderMetricDetail(key) {
+    const hours = state.metricHours;
+    const segmented = [24, 168, 720].map((value) => `<button type="button" data-metric-hours="${value}" class="${hours === value ? "active" : ""}">${value === 24 ? "24 часа" : value === 168 ? "7 дней" : "30 дней"}</button>`).join("");
+    return `${detailBack()}
+      ${renderHero("ok", metricLabel(key), "История метрики и пики нагрузки", true)}
+      <div class="segmented" role="group" aria-label="Период">${segmented}</div>
+      <div id="metric-body" class="skeleton-stack" aria-busy="true">
+        <div class="skeleton-card"></div><div class="skeleton-card"></div>
+      </div>`;
+  }
+
+  async function loadMetricDetail(key) {
+    const token = ++state.metricToken;
+    const body = $("metric-body");
+    if (!body) return;
+    body.className = "skeleton-stack";
+    body.setAttribute("aria-busy", "true");
+    try {
+      const rows = await api(`/api/history?hours=${state.metricHours}`);
+      if (token !== state.metricToken || !state.detail || state.detail.kind !== "metric") return;
+      body.className = "";
+      body.removeAttribute("aria-busy");
+      body.innerHTML = rows.length
+        ? chartCard(rows, key, metricLabel(key), state.metricHours)
+        : emptyState("Нет истории", "Данные появятся после нескольких срезов монитора.");
+    } catch (error) {
+      if (token !== state.metricToken) return;
+      body.className = "";
+      body.removeAttribute("aria-busy");
+      body.innerHTML = emptyState("Не удалось загрузить историю", error.message || "Ошибка");
+    }
+  }
+
+  function renderSubDetail(index) {
+    const item = (state.snapshot.subscriptions || [])[index];
+    if (!item) return emptyState("Подписка не найдена", String(index), detailBack());
+    const status = subscriptionStatus(item);
+    const percent = item.total_bytes > 0 ? clamp(Number(item.used_bytes) / Number(item.total_bytes) * 100) : 0;
+    return `${detailBack()}
+      ${renderHero(status.tone, displayName(item), `${item.inbound_remark || "без inbound"} · ${status.label}`, true)}
+      <section class="card">
+        <div class="card-head"><h2>Подписка</h2><span class="chip ${status.tone}">${esc(status.label)}</span></div>
+        <div class="kv">
+          <div class="kv-row"><span>ID</span><strong>${esc(item.sub_id || "—")}</strong></div>
+          <div class="kv-row"><span>Inbound</span><strong>${esc(item.inbound_remark || "—")}</strong></div>
+          <div class="kv-row"><span>Срок</span><strong>${esc(expiryLabel(item))}</strong></div>
+          <div class="kv-row"><span>Трафик</span><strong>${fmtBytes(item.used_bytes)}${item.total_bytes > 0 ? ` / ${fmtBytes(item.total_bytes)}` : " · без лимита"}</strong></div>
+        </div>
+        ${item.total_bytes > 0 ? `<div class="meter"><i class="${tone(percent)}" style="width:${percent}%"></i></div>` : ""}
+      </section>`;
+  }
+
+  function renderCheckDetail(index) {
+    const item = (state.snapshot.checks || [])[index];
+    if (!item) return emptyState("Проверка не найдена", String(index), detailBack());
+    const tone = item.severity === "critical" ? "bad" : "warn";
+    return `${detailBack()}
+      ${renderHero(tone, item.title, item.detail, true)}
+      <section class="card">
+        <div class="card-head"><h2>Что делать</h2><span class="chip ${tone}">${esc(item.severity || "warning")}</span></div>
+        <p class="hint">${esc(item.resolve || "Проверьте журнал и состояние сервиса.")}</p>
+      </section>`;
+  }
+
+  async function renderDetail() {
+    if (!state.detail) return;
+    const { kind, id } = state.detail;
+    if (kind === "service") {
+      view.innerHTML = renderServiceDetail(String(id));
+      await loadServiceLogs(String(id));
+    } else if (kind === "metric") {
+      view.innerHTML = renderMetricDetail(String(id));
+      await loadMetricDetail(String(id));
+    } else if (kind === "sub") {
+      view.innerHTML = renderSubDetail(Number(id));
+    } else if (kind === "check") {
+      view.innerHTML = renderCheckDetail(Number(id));
+    }
+  }
+
+  function renderSearch() {
+    const sections = state.tabs.map(([key, label]) => ({ key, label }));
+    const services = state.snapshot.services || [];
+    const subs = state.snapshot.subscriptions || [];
+    const sectionRows = sections.map((item) => `<button class="search-hit" type="button" data-search-tab="${item.key}" data-search="${esc(item.label)}"><strong>${esc(item.label)}</strong><span>Раздел</span></button>`).join("");
+    const serviceRows = services.map((item) => `<button class="search-hit" type="button" data-search-service="${esc(item.name)}" data-search="${esc(item.name)}"><strong>${esc(item.name)}</strong><span>${item.active ? "служба работает" : "служба не работает"}</span></button>`).join("");
+    const subRows = subs.map((item, index) => `<button class="search-hit" type="button" data-search-sub="${index}" data-search="${esc([displayName(item), item.inbound_remark, item.sub_id].join(" "))}"><strong>${esc(displayName(item))}</strong><span>${esc(item.inbound_remark || "подписка")}</span></button>`).join("");
+    return `<button class="link-button back-link" type="button" data-search-close>← Закрыть</button>
+      <section class="card">
+        <div class="card-head"><h2>Поиск</h2><span class="chip">${services.length + subs.length + sections.length}</span></div>
+        <div class="search"><label class="sr-only" for="global-search">Поиск по разделам, службам и подпискам</label><input id="global-search" type="search" placeholder="Служба, подписка или раздел" autocomplete="off" value="${esc(state.searchQuery)}"></div>
+        <div id="search-results" class="list">
+          ${sectionRows}${serviceRows}${subRows}
+        </div>
+        <p id="search-empty" class="hint" hidden>Ничего не найдено.</p>
+      </section>`;
+  }
+
+  function applySearchFilter() {
+    const query = state.searchQuery.trim().toLowerCase();
+    const hits = [...document.querySelectorAll(".search-hit")];
+    let visible = 0;
+    for (const hit of hits) {
+      const match = !query || (hit.dataset.search || "").toLowerCase().includes(query);
+      hit.hidden = !match;
+      if (match) visible += 1;
+    }
+    const empty = $("search-empty");
+    if (empty) empty.hidden = visible > 0;
+  }
+
   function updateViews() {
-    const terminal = state.active === "terminal";
+    const overlay = Boolean(state.detail || state.searchOpen);
+    const terminal = state.active === "terminal" && !overlay;
     view.hidden = terminal;
     terminalView.hidden = !terminal;
     const panel = terminal ? terminalView : view;
@@ -854,6 +1159,15 @@
     if (!state.snapshot) return;
     updateHeader();
     updateViews();
+    if (state.searchOpen) {
+      view.innerHTML = renderSearch();
+      applySearchFilter();
+      return;
+    }
+    if (state.detail) {
+      await renderDetail();
+      return;
+    }
     if (state.active === "terminal") {
       ensureTerminal();
       return;
@@ -883,7 +1197,11 @@
 
   function switchTab(key, focus = false) {
     if (!state.tabs.some(([name]) => name === key)) return;
+    const wasOverlay = Boolean(state.detail || state.searchOpen);
+    state.detail = null;
+    state.searchOpen = false;
     if (key === state.active) {
+      if (wasOverlay) render();
       if (focus) {
         const current = $(`tab-${key}`);
         if (current) current.focus();
@@ -1066,6 +1384,7 @@
       state.authRetry = 0;
       await loadMeta();
       await render();
+      if (state.updateRequest && !state.updateTimer) startUpdatePolling();
       if (!state.update && !state.updateLoading) loadUpdate(false);
     } catch (error) {
       if (error.status === 401) {
@@ -1106,6 +1425,19 @@
     if (event.target.closest("[data-update-help]")) switchTab("help");
   });
 
+  $("search").addEventListener("click", () => {
+    state.searchOpen = !state.searchOpen;
+    if (state.searchOpen) {
+      state.detail = null;
+      state.searchQuery = "";
+    }
+    render();
+    if (state.searchOpen) {
+      const input = $("global-search");
+      if (input) input.focus();
+    }
+  });
+
   $("refresh").addEventListener("click", async () => {
     if (state.loading || state.authPending) return;
     await load();
@@ -1133,6 +1465,54 @@
   });
 
   view.addEventListener("click", (event) => {
+    if (event.target.closest("[data-detail-back]")) {
+      closeDetail();
+      return;
+    }
+    if (event.target.closest("[data-search-close]")) {
+      state.searchOpen = false;
+      render();
+      return;
+    }
+    const searchTab = event.target.closest("[data-search-tab]");
+    if (searchTab) {
+      switchTab(searchTab.dataset.searchTab || "overview");
+      return;
+    }
+    const searchService = event.target.closest("[data-search-service]");
+    if (searchService) {
+      openDetail("service", searchService.dataset.searchService || "");
+      return;
+    }
+    const searchSub = event.target.closest("[data-search-sub]");
+    if (searchSub) {
+      openDetail("sub", Number(searchSub.dataset.searchSub));
+      return;
+    }
+    const metric = event.target.closest("[data-metric]");
+    if (metric) {
+      openDetail("metric", metric.dataset.metric || "cpu");
+      return;
+    }
+    const check = event.target.closest("[data-check]");
+    if (check) {
+      openDetail("check", Number(check.dataset.check));
+      return;
+    }
+    const logs = event.target.closest("[data-service-logs]");
+    if (logs) {
+      const name = logs.dataset.serviceLogs || "";
+      state.serviceLogs[name] = undefined;
+      loadServiceLogs(name, true);
+      return;
+    }
+    const hoursButton = event.target.closest("[data-metric-hours]");
+    if (hoursButton) {
+      const value = Number(hoursButton.dataset.metricHours);
+      state.metricHours = [24, 168, 720].includes(value) ? value : 24;
+      render();
+      return;
+    }
     if (event.target.closest("[data-dashboard-toggle]")) {
       state.dashboardOpen = !state.dashboardOpen;
       render();
@@ -1148,9 +1528,23 @@
       render();
       return;
     }
+    const service = event.target.closest("[data-service]");
+    if (service) {
+      openDetail("service", service.dataset.service || "");
+      return;
+    }
+    const sub = event.target.closest("[data-sub]");
+    if (sub) {
+      openDetail("sub", Number(sub.dataset.sub));
+      return;
+    }
     const nav = event.target.closest("[data-nav]");
     if (nav) {
       switchTab(nav.dataset.nav);
+      return;
+    }
+    if (event.target.closest("[data-request-update]")) {
+      requestUpdate();
       return;
     }
     if (event.target.closest("[data-check-update]")) {
@@ -1173,6 +1567,10 @@
     if (event.target.id === "subs-search") {
       state.subsQuery = event.target.value;
       applySubsFilter();
+    }
+    if (event.target.id === "global-search") {
+      state.searchQuery = event.target.value;
+      applySearchFilter();
     }
   });
 

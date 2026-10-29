@@ -86,6 +86,7 @@ a { color: var(--link); }
   display: flex; align-items: center; justify-content: space-between;
   gap: 12px; min-height: 44px;
 }
+.header-actions { display: flex; align-items: center; gap: 6px; }
 .brand-lockup { display: flex; align-items: center; gap: 10px; min-width: 0; }
 .brand-mark {
   width: 38px; height: 38px; flex: 0 0 auto; border-radius: 11px;
@@ -253,6 +254,26 @@ a { color: var(--link); }
 }
 .dashboard-settings .check-row:last-child { border-bottom: 0; }
 .dashboard-settings input { width: 18px; height: 18px; accent-color: var(--accent); }
+.clickable { cursor: pointer; }
+.metric-card.clickable { transition: transform .15s ease, border-color .15s ease; }
+.metric-card.clickable:hover { transform: translateY(-1px); border-color: var(--border-strong); }
+.back-link { margin: 0 0 2px; }
+.log-view {
+  margin: 0; max-height: 46vh; overflow: auto; padding: 10px;
+  border-radius: var(--radius-sm); background: var(--surface-2);
+  color: var(--text); font: 11px/1.45 ui-monospace, SFMono-Regular, Menlo, monospace;
+  white-space: pre-wrap; overflow-wrap: anywhere;
+}
+.search-hit {
+  display: flex; align-items: baseline; justify-content: space-between; gap: 10px;
+  width: 100%; padding: 11px 0; border: 0; border-bottom: 1px solid var(--border);
+  background: transparent; color: var(--text); text-align: left;
+}
+.search-hit:last-child { border-bottom: 0; }
+.search-hit strong { font-size: 14px; }
+.search-hit span { color: var(--muted); font-size: 11px; }
+.sub-row.clickable:hover, .list-row.clickable:hover { background: color-mix(in srgb, var(--accent) 5%, transparent); }
+.notice li.clickable { cursor: pointer; text-decoration: underline; text-decoration-color: color-mix(in srgb, var(--muted) 45%, transparent); }
 .pin-button {
   width: 28px; height: 28px; flex: 0 0 auto; border: 0; border-radius: 8px;
   background: transparent; color: var(--muted); font-size: 16px; line-height: 1;
@@ -373,7 +394,26 @@ a { color: var(--link); }
 }
 .card > .link-button { margin-top: 4px; }
 
-.update-card .ghost { width: 100%; margin-top: 10px; }
+.update-card .ghost, .update-card .primary { width: 100%; margin-top: 10px; }
+.update-progress {
+  position: relative; height: 10px; overflow: hidden; border-radius: 999px;
+  background: color-mix(in srgb, var(--text) 10%, transparent);
+  margin: 12px 0 8px;
+}
+.update-progress > i {
+  display: block; height: 100%; border-radius: inherit;
+  background: linear-gradient(90deg, var(--accent), color-mix(in srgb, var(--accent) 60%, #ffffff));
+  transition: width .6s cubic-bezier(.2,.8,.2,1);
+  position: relative;
+}
+.update-progress > i::after {
+  content: ""; position: absolute; inset: 0;
+  background: linear-gradient(90deg, transparent, rgba(255,255,255,.35), transparent);
+  transform: translateX(-100%); animation: update-shimmer 1.4s ease-in-out infinite;
+}
+.update-status { display: flex; justify-content: space-between; gap: 8px; font-size: 12px; }
+.update-status span { color: var(--muted); font-variant-numeric: tabular-nums; }
+@keyframes update-shimmer { to { transform: translateX(100%); } }
 .help-card { padding: 0; }
 .help-card summary {
   display: flex; align-items: center; justify-content: space-between; gap: 10px;

@@ -220,6 +220,19 @@ class MonitorBot(CommandMixin, JobsMixin):
                 first=timedelta(minutes=2),
                 name="update-notify",
             )
+        if self.settings.webapp_enabled:
+            job_queue.run_repeating(
+                self.job_update_requests,
+                interval=timedelta(seconds=5),
+                first=timedelta(seconds=15),
+                name="web-update-requests",
+            )
+            job_queue.run_repeating(
+                self.job_finish_web_updates,
+                interval=timedelta(minutes=1),
+                first=timedelta(seconds=45),
+                name="web-update-status",
+            )
         job_queue.run_repeating(
             self.job_prune,
             interval=timedelta(hours=6),
@@ -237,6 +250,7 @@ class MonitorBot(CommandMixin, JobsMixin):
         )
         await self._verify_after_reboot()
         await self._resume_apt_watches()
+        await self._finish_web_updates()
         await self._flush_alert_outbox()
         if self.settings.webapp_enabled and self.settings.webapp_public_origin:
             try:
@@ -498,6 +512,21 @@ class MonitorBot(CommandMixin, JobsMixin):
             )
             return
 
+        if data.startswith("webupdate_cancel:"):
+            request_id = data.split(":", 1)[1]
+            if await self._cancel_web_update(request_id):
+                await self._edit(
+                    query,
+                    "❌ Обновление отменено. Бот не перезапускался.",
+                    markup=self._main_menu(user_id),
+                )
+            else:
+                await self._edit(
+                    query,
+                    "⌛ Запрос уже неактуален.",
+                    markup=self._main_menu(user_id),
+                )
+            return
         if data.startswith("ask:"):
             await self._ask_confirmation(query, data)
             return
@@ -994,7 +1023,33 @@ class MonitorBot(CommandMixin, JobsMixin):
                 await self._do_reboot(status, user_id)
                 return
             if action == ACTION_UPDATE_BOT:
+                request_id = args[0] if args else ""
+                if request_id:
+                    await self._set_web_update_status(
+                        request_id,
+                        state="running",
+                        progress=40,
+                        stage="Устанавливаю обновление",
+                        detail="Скачиваю и проверяю архив.",
+                    )
                 result = await self.actions.update_bot()
+                if request_id:
+                    if result.ok:
+                        await self._set_web_update_status(
+                            request_id,
+                            state="installing",
+                            progress=80,
+                            stage="Перезапускаю бота",
+                            detail="Осталось дождаться возврата сервиса.",
+                        )
+                    else:
+                        await self._set_web_update_status(
+                            request_id,
+                            state="failed",
+                            progress=0,
+                            stage="Не удалось запустить обновление",
+                            detail=result.summary(300),
+                        )
                 if result.ok:
                     await _safe_edit(
                         status,
@@ -1042,6 +1097,14 @@ class MonitorBot(CommandMixin, JobsMixin):
                 raise ActionError(f"Неизвестное действие: {action}")
         except Exception as exc:  # noqa: BLE001 — сбой возвращаем в чат, не «зависаем»
             logger.error("Действие %s не удалось: %s", action, exc, exc_info=True)
+            if action == ACTION_UPDATE_BOT and args:
+                await self._set_web_update_status(
+                    args[0],
+                    state="failed",
+                    progress=0,
+                    stage="Ошибка обновления",
+                    detail=str(exc) or exc.__class__.__name__,
+                )
             await asyncio.to_thread(
                 self.storage.audit,
                 action,

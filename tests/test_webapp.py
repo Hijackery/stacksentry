@@ -5,6 +5,7 @@ from __future__ import annotations
 import hashlib
 import hmac
 import json
+import subprocess
 import time
 from collections.abc import Callable
 from pathlib import Path
@@ -17,6 +18,12 @@ from stacksentry.models import MonitorSnapshot, PanelHealth, SystemMetrics
 from stacksentry.settings import ConfigError, Settings, load_settings
 from stacksentry.storage import Storage
 from stacksentry.totp import totp_code
+from stacksentry.update_spool import (
+    read_json,
+    request_path,
+    status_path,
+    write_status,
+)
 from stacksentry.updates import UpdateInfo
 from stacksentry.webapp import (
     WebAppConfig,
@@ -144,6 +151,86 @@ def test_terminal_tab_origin_and_csp(
     assert meta.json()["version"]
     policy = meta.headers["Content-Security-Policy"]
     assert "frame-src 'self' https://term.example.com" in policy
+
+
+def test_logs_endpoint_only_for_watched_services(
+    make_settings: Callable[..., Settings],
+    storage: Storage,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    settings = make_settings(webapp_enabled=True, webapp_secret=SECRET)
+    app = create_app(
+        _config(settings),
+        monitor=FakeMonitor(),  # type: ignore[arg-type]
+        storage=storage,
+    )
+    client = TestClient(app)
+    client.post("/api/session", json={"initData": _init_data(settings.telegram_token)})
+
+    def fake_run(
+        argv: list[str], **_kwargs: object
+    ) -> subprocess.CompletedProcess[str]:
+        assert argv[0] == "journalctl"
+        return subprocess.CompletedProcess(argv, 0, "line one\nline two\n", "")
+
+    monkeypatch.setattr("stacksentry.webapp.subprocess.run", fake_run)
+    response = client.get("/api/logs?service=x-ui&lines=20")
+    assert response.status_code == 200
+    assert "line two" in response.json()["text"]
+    assert client.get("/api/logs?service=ssh").status_code == 404
+
+
+def test_update_request_creates_spool_and_status(
+    make_settings: Callable[..., Settings],
+    storage: Storage,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    spool = Path("/tmp") / "stacksentry-webapp-update-test"
+    settings = make_settings(
+        webapp_enabled=True,
+        webapp_secret=SECRET,
+        update_spool_dir=spool,
+    )
+    info = UpdateInfo(
+        current_version="1.0.0",
+        current_sha="a" * 40,
+        remote_sha="b" * 40,
+        remote_version="1.1.0",
+        remote_date="29.10.2026 10:00 UTC",
+        remote_message="Обновление",
+        update_available=True,
+        repo="Hijackery/stacksentry",
+    )
+    monkeypatch.setattr("stacksentry.webapp.check_for_update", lambda **_kw: info)
+    app = create_app(
+        _config(settings),
+        monitor=FakeMonitor(),  # type: ignore[arg-type]
+        storage=storage,
+    )
+    client = TestClient(app)
+    client.post("/api/session", json={"initData": _init_data(settings.telegram_token)})
+
+    created = client.post("/api/update/request")
+    assert created.status_code == 200, created.text
+    request_id = created.json()["id"]
+    assert request_path(spool, request_id).is_file()
+    assert read_json(request_path(spool, request_id))["user_id"] == ADMIN_ID  # type: ignore[index]
+
+    queued = client.get(f"/api/update/status?request={request_id}")
+    assert queued.status_code == 200
+    assert queued.json()["state"] == "queued"
+
+    write_status(
+        spool,
+        request_id,
+        state="awaiting_confirmation",
+        progress=20,
+        stage="Ожидает подтверждения",
+    )
+    confirmed = client.get(f"/api/update/status?request={request_id}")
+    assert confirmed.json()["state"] == "awaiting_confirmation"
+    assert confirmed.json()["progress"] == 20
+    assert status_path(spool, request_id).is_file()
 
 
 def test_metrics_and_health_endpoints(
@@ -324,6 +411,12 @@ def test_mini_app_has_help_tab() -> None:
     assert 'input.value = ""' in js
     assert "stacksentry.pins" in js
     assert "Настроить дашборд" in js
+    assert "renderServiceDetail" in js
+    assert "renderMetricDetail" in js
+    assert "global-search" in js
+    assert "data-request-update" in js
+    assert "/api/update/status" in js
+    assert "update-progress" in js
 
 
 def test_cookie_flags(make_settings: Callable[..., Settings], storage: Storage) -> None:

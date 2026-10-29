@@ -60,6 +60,24 @@ def update_menu(info: UpdateInfo | None = None) -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(rows)
 
 
+def web_update_menu(request_id: str) -> InlineKeyboardMarkup:
+    """Подтверждение обновления, запрошенного из Mini App."""
+    return InlineKeyboardMarkup(
+        [
+            [
+                InlineKeyboardButton(
+                    "✅ Подтвердить",
+                    callback_data=f"ask:update_bot:{request_id}",
+                ),
+                InlineKeyboardButton(
+                    "❌ Отмена",
+                    callback_data=f"webupdate_cancel:{request_id}",
+                ),
+            ]
+        ]
+    )
+
+
 def version_menu() -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(
         [

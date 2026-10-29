@@ -1855,6 +1855,11 @@ fi
 # Каталог состояния создаёт и пересоздаёт systemd (StateDirectory=), но на
 # этапе установки он нужен уже сейчас — самопроверка пишет в базу.
 install -d -m 0750 -o "$SERVICE_USER" -g "${SERVICE_GROUP:-$SERVICE_USER}" "$STATE_DIR"
+# Общая очередь запросов на обновление из Mini App: бот и webapp в одной группе.
+install -d -m 0770 -o "$SERVICE_USER" -g "${SERVICE_GROUP:-$SERVICE_USER}" \
+    "$STATE_DIR/update"
+# setgid: файлы из webapp наследуют группу бота, а не webapp.
+chmod 2770 "$STATE_DIR/update"
 # Root-воркеры (apt/release) пишут только в отдельный root-owned каталог.
 install -d -m 0700 -o root -g root "$STATE_DIR/root"
 rm -f "$STATE_DIR"/apt-*.status "$STATE_DIR"/apt-*.packages "$STATE_DIR"/apt-*.log 2>/dev/null || true
@@ -2950,6 +2955,10 @@ install_webapp() {
     # .env принадлежит root:SERVICE_GROUP (0640). Webapp читает его только как
     # член этой группы, но не получает прав на sudo-обёртку или ключи терминала.
     usermod -aG "${SERVICE_GROUP:-$SERVICE_USER}" "$WEBAPP_USER" 2>/dev/null || true
+    # Только чтение журналов служб для drill-down в Mini App.
+    if getent group systemd-journal >/dev/null 2>&1; then
+        usermod -aG systemd-journal "$WEBAPP_USER" 2>/dev/null || true
+    fi
     install -d -m 0750 -o "$WEBAPP_USER" -g "$WEBAPP_GROUP" "$WEBAPP_HOME"
     # Каталог мог остаться от прерванного запуска/старой раскладки.
     chown -R "$WEBAPP_USER":"$WEBAPP_GROUP" "$WEBAPP_HOME" 2>/dev/null || true
@@ -2976,7 +2985,7 @@ ExecStart=$PREFIX/.venv/bin/uvicorn --factory stacksentry.webapp:create_app_from
 Restart=on-failure
 RestartSec=5
 ProtectSystem=strict
-ReadWritePaths=$WEBAPP_HOME
+ReadWritePaths=$WEBAPP_HOME $STATE_DIR/update
 ProtectHome=true
 PrivateTmp=true
 NoNewPrivileges=true

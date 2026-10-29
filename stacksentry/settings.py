@@ -134,6 +134,7 @@ class Settings:
     admin_ids: tuple[int, ...]
     alert_chat_id: int | None
     state_path: Path
+    update_spool_dir: Path
     log_path: Path
     log_level: str
 
@@ -265,12 +266,14 @@ def load_settings(env_file: Path | None = None) -> Settings:
 
 
 def _build_settings() -> Settings:
+    state_path = Path(env_str("STATE_PATH", str(BASE_DIR / "state.db")))
     settings = Settings(
         telegram_token=env_str("TELEGRAM_BOT_TOKEN"),
         telegram_api_url=env_str("TELEGRAM_API_URL", "https://api.telegram.org"),
         admin_ids=tuple(env_int_list("TELEGRAM_ADMIN_IDS")),
         alert_chat_id=env_int("ALERT_CHAT_ID", 0) or None,
-        state_path=Path(env_str("STATE_PATH", str(BASE_DIR / "state.db"))),
+        state_path=state_path,
+        update_spool_dir=state_path.parent / "update",
         log_path=Path(env_str("LOG_PATH", str(BASE_DIR / "logs" / "bot.log"))),
         log_level=env_str("LOG_LEVEL", "INFO").upper(),
         log_json=env_bool("LOG_JSON", False),

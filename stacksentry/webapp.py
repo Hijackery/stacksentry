@@ -13,6 +13,7 @@ import hmac
 import json
 import os
 import secrets
+import subprocess
 import time
 from dataclasses import asdict, dataclass, replace
 from pathlib import Path
@@ -29,6 +30,14 @@ from .settings import ConfigError, Settings, load_settings
 from .storage import Storage
 from .terminal.auth import RateLimiter, validate_init_data
 from .totp import ReplayGuard, normalize_totp, verify_totp
+from .update_spool import (
+    read_json,
+    read_status,
+    request_path,
+    valid_id,
+    write_json,
+    write_status,
+)
 from .updates import check_for_update
 
 COOKIE_NAME = "stacksentry_session"
@@ -318,17 +327,15 @@ def create_app(
             "terminal_origin": config.terminal_origin,
         }
 
-    @app.get("/api/update")
-    async def update(user_id: int = Depends(current_user)) -> dict[str, Any]:
-        """Проверка обновлений StackSentry без права что-либо устанавливать."""
+    async def update_payload(*, force: bool = False) -> dict[str, Any]:
         now = time.monotonic()
         cached = update_cache["value"]
-        if cached is not None and now - update_cache["at"] <= 900:
+        if not force and cached is not None and now - update_cache["at"] <= 900:
             return cast(dict[str, Any], cached)
         async with update_lock:
             now = time.monotonic()
             cached = update_cache["value"]
-            if cached is not None and now - update_cache["at"] <= 900:
+            if not force and cached is not None and now - update_cache["at"] <= 900:
                 return cast(dict[str, Any], cached)
             info = await asyncio.to_thread(check_for_update)
             payload = {
@@ -346,6 +353,70 @@ def create_app(
             update_cache["value"] = payload
             update_cache["at"] = time.monotonic()
             return payload
+
+    @app.get("/api/update")
+    async def update(
+        force: bool = False, user_id: int = Depends(current_user)
+    ) -> dict[str, Any]:
+        """Проверка обновлений StackSentry без права что-либо устанавливать."""
+        return await update_payload(force=force)
+
+    @app.post("/api/update/request")
+    async def update_request(user_id: int = Depends(current_user)) -> dict[str, Any]:
+        """Создаёт запрос: бот попросит админа подтвердить обновление."""
+        info = await update_payload(force=True)
+        if info.get("update_available") is not True:
+            raise HTTPException(status_code=409, detail="обновление не найдено")
+        request_id = secrets.token_urlsafe(12)
+        payload = {
+            "id": request_id,
+            "user_id": user_id,
+            "created_at": time.time(),
+            "current_version": info.get("current_version", ""),
+            "target_version": info.get("remote_version", ""),
+            "target_sha": info.get("remote_sha", ""),
+        }
+        spool = config.settings.update_spool_dir
+        await asyncio.to_thread(write_json, request_path(spool, request_id), payload)
+        await asyncio.to_thread(
+            write_status,
+            spool,
+            request_id,
+            state="queued",
+            progress=5,
+            stage="Запрос создан",
+            detail="Ожидаю подтверждения в Telegram.",
+            target_sha=str(payload["target_sha"]),
+            target_version=str(payload["target_version"]),
+        )
+        return {"id": request_id, "state": "queued", "progress": 5}
+
+    @app.get("/api/update/status")
+    async def update_status(
+        request: str, user_id: int = Depends(current_user)
+    ) -> dict[str, Any]:
+        if not valid_id(request):
+            raise HTTPException(status_code=400, detail="некорректный запрос")
+        spool = config.settings.update_spool_dir
+        status = await asyncio.to_thread(read_status, spool, request)
+        if status is not None:
+            return status
+        pending = await asyncio.to_thread(read_json, request_path(spool, request))
+        if pending is not None:
+            return {
+                "id": request,
+                "state": "queued",
+                "progress": 5,
+                "stage": "Запрос создан",
+                "detail": "Ожидаю подтверждения в Telegram.",
+            }
+        return {
+            "id": request,
+            "state": "unknown",
+            "progress": 0,
+            "stage": "Статус не найден",
+            "detail": "Запрос устарел или уже завершён.",
+        }
 
     @app.get("/healthz")
     async def healthz() -> dict[str, Any]:
@@ -396,6 +467,42 @@ def create_app(
                 snapshot_cache["value"] = await monitor.snapshot()
                 snapshot_cache["at"] = time.monotonic()
         return _snapshot_json(snapshot_cache["value"], snapshot_cache["at"])
+
+    @app.get("/api/logs")
+    async def logs(
+        service: str, lines: int = 80, user_id: int = Depends(current_user)
+    ) -> dict[str, Any]:
+        if service not in config.settings.services:
+            raise HTTPException(status_code=404, detail="служба не наблюдается")
+        limit = max(10, min(lines, 200))
+
+        def read() -> subprocess.CompletedProcess[str]:
+            return subprocess.run(
+                [
+                    "journalctl",
+                    "-u",
+                    service,
+                    "-n",
+                    str(limit),
+                    "--no-pager",
+                    "--output=short-iso",
+                ],
+                capture_output=True,
+                text=True,
+                timeout=10,
+                check=False,
+            )
+
+        try:
+            proc = await asyncio.to_thread(read)
+        except (OSError, subprocess.SubprocessError) as exc:
+            raise HTTPException(status_code=502, detail=str(exc)) from exc
+        if proc.returncode != 0:
+            raise HTTPException(
+                status_code=502,
+                detail=(proc.stderr or "journalctl недоступен").strip()[:300],
+            )
+        return {"service": service, "text": proc.stdout[-12000:], "lines": limit}
 
     @app.get("/api/history")
     async def history(hours: int = 24, user_id: int = Depends(current_user)) -> Any:

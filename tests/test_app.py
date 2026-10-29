@@ -20,7 +20,13 @@ from telegram.ext import CommandHandler
 
 from stacksentry.app import MonitorBot
 from stacksentry.settings import Settings
-from stacksentry.updates import UpdateInfo
+from stacksentry.update_spool import (
+    read_status,
+    request_path,
+    write_json,
+    write_status,
+)
+from stacksentry.updates import InstallInfo, UpdateInfo
 
 ADMIN_ID = 42
 GUEST_ID = 999
@@ -263,6 +269,91 @@ def test_quiet_hours_wrap_midnight(
         lambda: SimpleNamespace(tm_hour=12, tm_min=0),
     )
     assert bot_app._quiet_hours() is False
+
+
+async def test_bot_receives_web_update_request(
+    bot_app: MonitorBot, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    request_id = "abcDEF1234567890"
+    spool = bot_app.settings.update_spool_dir
+    write_json(
+        request_path(spool, request_id),
+        {
+            "id": request_id,
+            "user_id": ADMIN_ID,
+            "created_at": time.time(),
+            "current_version": "1.0.0",
+            "target_version": "1.1.0",
+            "target_sha": "b" * 40,
+        },
+    )
+    sent: list[tuple[int, str]] = []
+
+    async def fake_notify(chat_id: int, text: str, **_kwargs: object) -> bool:
+        sent.append((chat_id, text))
+        return True
+
+    monkeypatch.setattr(bot_app, "_notify", fake_notify)
+
+    await bot_app.job_update_requests(None)  # type: ignore[arg-type]
+    await bot_app.job_update_requests(None)  # type: ignore[arg-type]
+
+    assert len(sent) == 1
+    assert not request_path(spool, request_id).exists()
+    status = read_status(spool, request_id)
+    assert status is not None
+    assert status["state"] == "awaiting_confirmation"
+    assert status["progress"] == 20
+
+
+async def test_web_update_finishes_after_restart(
+    bot_app: MonitorBot, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    request_id = "finishABC12345678"
+    spool = bot_app.settings.update_spool_dir
+    write_status(
+        spool,
+        request_id,
+        state="installing",
+        progress=80,
+        stage="Перезапускаю бота",
+        target_sha="b" * 40,
+        target_version="1.1.0",
+    )
+    monkeypatch.setattr(
+        "stacksentry.app_jobs.read_install_info",
+        lambda: InstallInfo(
+            version="1.1.0",
+            ref="main",
+            sha="b" * 40,
+            installed_at="",
+            repo="Hijackery/stacksentry",
+        ),
+    )
+
+    await bot_app._finish_web_updates()
+
+    status = read_status(spool, request_id)
+    assert status is not None
+    assert status["state"] == "done"
+    assert status["progress"] == 100
+
+
+async def test_web_update_cancel_is_recorded(bot_app: MonitorBot) -> None:
+    request_id = "cancelABC12345678"
+    spool = bot_app.settings.update_spool_dir
+    write_status(
+        spool,
+        request_id,
+        state="awaiting_confirmation",
+        progress=20,
+        stage="Ожидает подтверждения",
+    )
+
+    assert await bot_app._cancel_web_update(request_id)
+    status = read_status(spool, request_id)
+    assert status is not None
+    assert status["state"] == "cancelled"
 
 
 async def test_update_notification_is_sent_once_per_commit(

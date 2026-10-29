@@ -54,6 +54,15 @@ def test_readme_documents_every_env_example_key() -> None:
     assert not missing, f"ключи не описаны в README: {missing}"
 
 
+def test_version_is_synced_with_readme_and_changelog() -> None:
+    from stacksentry import __version__
+
+    readme = README.read_text(encoding="utf-8")
+    changelog = (BASE_DIR / "CHANGELOG.md").read_text(encoding="utf-8")
+    assert f"**{__version__}**" in readme
+    assert f"## [{__version__}]" in changelog
+
+
 def test_filled_example_passes_validation(tmp_path: Path) -> None:
     """Пример из репозитория должен быть валиден после заполнения."""
     values = {
