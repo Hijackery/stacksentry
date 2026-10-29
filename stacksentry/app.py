@@ -284,9 +284,7 @@ class MonitorBot(CommandMixin, JobsMixin):
         # В личном чате администратора весь вывод живёт в одном сообщении:
         # алерты и отчёты не должны оставлять после себя вереницу меню.
         if chat_id in self.settings.admin_ids and len(chunks) == 1:
-            return bool(
-                await self._show_screen(chat_id, text, markup=markup)
-            )
+            return bool(await self._show_screen(chat_id, text, markup=markup))
         delivered = True
         for chunk in chunks:
             try:
@@ -1040,8 +1038,7 @@ class MonitorBot(CommandMixin, JobsMixin):
             if len(code) != 6:
                 await self._reply_screen(
                     message,
-                    "Нужны 6 цифр из приложения-аутентификатора "
-                    "или нажмите «Отмена».",
+                    "Нужны 6 цифр из приложения-аутентификатора или нажмите «Отмена».",
                     markup=ui.twofa_menu(),
                 )
                 return

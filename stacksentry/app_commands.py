@@ -439,9 +439,7 @@ class CommandMixin(BotBase):
                     # лучше одно сообщение с новым текстом, чем два меню.
                     with suppress(TelegramError):
                         await bot.delete_message(chat_id, mid)
-                    if await self._edit_message(
-                        chat_id, previous, text, markup=markup
-                    ):
+                    if await self._edit_message(chat_id, previous, text, markup=markup):
                         return cast(Message | None, sent)
             return cast(Message | None, sent)
 
@@ -593,6 +591,4 @@ class CommandMixin(BotBase):
         except TelegramError as exc:
             logger.warning("Не удалось обновить сообщение: %s", exc)
         message = _message_of(callback)
-        await self._show_screen(
-            message.chat_id, text, markup=markup, reply_to=message
-        )
+        await self._show_screen(message.chat_id, text, markup=markup, reply_to=message)
