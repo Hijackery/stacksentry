@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import time
 from collections.abc import Callable
 from datetime import datetime, timezone
 from unittest.mock import AsyncMock
@@ -105,6 +106,49 @@ async def test_dangerous_action_asks_for_totp(
         assert "Нужен код 2FA" in text
         assert bot._pending_2fa[ADMIN_ID]["action"] == "restart_service"
         assert markup is not None
+    finally:
+        bot.storage.close()
+
+
+async def test_wrong_code_deletes_message_and_keeps_one_2fa_screen(
+    make_settings: Callable[..., Settings],
+) -> None:
+    bot = _bot(make_settings)
+    try:
+        bot._pending_2fa[ADMIN_ID] = {
+            "action": "unlock",
+            "arg": "",
+            "data": "security",
+            "expires": time.time() + 60,
+        }
+        bot._last_screen[1] = 10
+        bot._check_totp = lambda *_args: (False, "Неверный код.", 2)  # type: ignore[method-assign]
+        telegram_bot = AsyncMock()
+        message = Message(
+            message_id=2,
+            date=datetime.now(tz=timezone.utc),
+            chat=Chat(id=1, type=ChatType.PRIVATE),
+            from_user=User(id=ADMIN_ID, first_name="admin", is_bot=False),
+            text="000000",
+        )
+        message.set_bot(telegram_bot)
+
+        class Ctx:
+            job_queue = None
+            user_data: dict[str, object] = {}
+
+        await bot.on_text(
+            Update(update_id=2, message=message),
+            Ctx(),  # type: ignore[arg-type]
+        )
+
+        deleted = telegram_bot.delete_message.await_args
+        assert deleted.kwargs["chat_id"] == 1
+        assert deleted.kwargs["message_id"] == 2
+        assert telegram_bot.send_message.await_count == 0
+        edit = telegram_bot.edit_message_text.await_args
+        assert edit.kwargs["message_id"] == 10
+        assert "Неверный код. Проверьте время на устройстве." in edit.kwargs["text"]
     finally:
         bot.storage.close()
 

@@ -382,11 +382,12 @@ class CommandMixin(BotBase):
         text: str,
         *,
         markup: InlineKeyboardMarkup | None = None,
+        bot: Any = None,
     ) -> bool:
         if not chat_id or not message_id:
             return False
         try:
-            await self.app.bot.edit_message_text(
+            await (bot or self.app.bot).edit_message_text(
                 chat_id=chat_id,
                 message_id=message_id,
                 text=text,
@@ -415,17 +416,20 @@ class CommandMixin(BotBase):
         *,
         markup: InlineKeyboardMarkup | None = None,
         reply_to: Message | None = None,
+        bot: Any = None,
     ) -> Message | None:
         """Показывает экран, оставляя в чате только одно сообщение бота."""
         if not chat_id:
             return None
         async with self._screen_lock(chat_id):
             previous = await self._tracked_screen(chat_id)
+            target = bot or self.app.bot
             sender = (
-                reply_to.reply_text
-                if reply_to is not None
-                else self.app.bot.send_message
+                reply_to.reply_text if reply_to is not None else target.send_message
             )
+            send_kwargs: dict[str, Any] = {}
+            if reply_to is None:
+                send_kwargs["chat_id"] = chat_id
             try:
                 sent = await _send_with_retry(
                     sender,
@@ -433,6 +437,7 @@ class CommandMixin(BotBase):
                     parse_mode=ParseMode.HTML,
                     disable_web_page_preview=True,
                     reply_markup=markup,
+                    **send_kwargs,
                 )
             except TelegramError as exc:
                 logger.warning("Не удалось отправить экран: %s", exc)
@@ -444,9 +449,9 @@ class CommandMixin(BotBase):
                 return cast(Message | None, sent)
             await self._remember_screen(chat_id, mid)
             if previous and previous != mid:
-                bot = reply_to.get_bot() if reply_to is not None else self.app.bot
+                delete_bot = reply_to.get_bot() if reply_to is not None else target
                 try:
-                    await bot.delete_message(chat_id, previous)
+                    await delete_bot.delete_message(chat_id, previous)
                 except TelegramError as exc:
                     logger.debug("Не удалось удалить прошлый экран: %s", exc)
                     # Если удалить старый нельзя, возвращаем его на место:

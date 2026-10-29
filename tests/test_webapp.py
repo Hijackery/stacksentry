@@ -321,6 +321,7 @@ def test_mini_app_has_help_tab() -> None:
     assert "update-banner" in js
     assert "Новая версия StackSentry" in js
     assert "loadUpdate" in js
+    assert 'input.value = ""' in js
     assert "stacksentry.pins" in js
     assert "Настроить дашборд" in js
 

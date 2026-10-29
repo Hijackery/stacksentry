@@ -1002,7 +1002,8 @@
         error.textContent = authErrorText(authError);
         button.disabled = false;
         button.textContent = "Войти";
-        input.select();
+        input.value = "";
+        input.focus();
       }
     });
   }

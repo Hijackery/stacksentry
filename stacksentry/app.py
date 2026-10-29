@@ -770,16 +770,25 @@ class MonitorBot(CommandMixin, JobsMixin):
             markup=ui.twofa_menu(),
         )
 
+    async def _show_2fa(self, message: Message, text: str) -> None:
+        """Обновляет существующий экран 2FA, не создавая второе окно."""
+        chat_id = message.chat_id
+        bot = message.get_bot()
+        previous = await self._tracked_screen(chat_id)
+        if previous and await self._edit_message(
+            chat_id, previous, text, markup=ui.twofa_menu(), bot=bot
+        ):
+            return
+        await self._show_screen(chat_id, text, markup=ui.twofa_menu(), bot=bot)
+
     async def _complete_2fa(self, message: Message, user_id: int, code: str) -> None:
         pending = self._pending_2fa.get(user_id)
         if pending is None:
             return
         if pending["expires"] < time.time():
             self._pending_2fa.pop(user_id, None)
-            await self._reply_screen(
-                message,
-                "⌛ Время ввода кода истекло. Начните действие заново.",
-                markup=ui.twofa_menu(),
+            await self._show_2fa(
+                message, "⌛ Время ввода кода истекло. Начните действие заново."
             )
             return
         ok, reason, left = self._check_totp(user_id, code)
@@ -792,11 +801,10 @@ class MonitorBot(CommandMixin, JobsMixin):
         )
         if not ok:
             suffix = f" Осталось попыток: {left}." if left else ""
-            await self._reply_screen(
-                message,
-                f"❌ {ui.esc(reason)}{suffix}\n\nВведите код ещё раз.",
-                markup=ui.twofa_menu(),
-            )
+            warning = "❌ Неверный код. Проверьте время на устройстве."
+            if reason and reason != "Неверный код.":
+                warning = f"❌ {ui.esc(reason)}"
+            await self._show_2fa(message, f"{warning}{suffix}\n\nВведите код ещё раз.")
             if left == 0:
                 self._pending_2fa.pop(user_id, None)
             return
@@ -804,17 +812,19 @@ class MonitorBot(CommandMixin, JobsMixin):
             self.storage.set_elevation, user_id, self.settings.elevation_ttl
         )
         self._pending_2fa.pop(user_id, None)
-        await self._reply_screen(
-            message,
+        await self._show_screen(
+            message.chat_id,
             f"🔓 Действия разблокированы до "
             f"{time.strftime('%H:%M', time.localtime(until))}.",
+            bot=message.get_bot(),
         )
         action = str(pending.get("action", ""))
         if action == "unlock":
-            await self._reply_screen(
-                message,
+            await self._show_screen(
+                message.chat_id,
                 ui.render_security(self.settings, until),
                 markup=ui.security_menu(True),
+                bot=message.get_bot(),
             )
             return
         await self._send_confirmation(
@@ -828,10 +838,11 @@ class MonitorBot(CommandMixin, JobsMixin):
         if description is None:
             return
         pending = self.actions.request(action, description, arg, owner_id=user_id)
-        await self._reply_screen(
-            message,
+        await self._show_screen(
+            message.chat_id,
             f"⚠️ {description}",
             markup=ui.confirm_menu(action, pending.token),
+            bot=message.get_bot(),
         )
 
     async def _show_security(self, callback: CallbackQuery, user_id: int) -> None:
@@ -1087,18 +1098,19 @@ class MonitorBot(CommandMixin, JobsMixin):
         if not self._chat_allowed(message.chat) or not self.is_admin(user.id):
             return
         if user.id in self._pending_2fa:
-            code = "".join(ch for ch in (message.text or "") if ch.isdigit())
-            if len(code) != 6:
-                await self._reply_screen(
-                    message,
-                    "Нужны 6 цифр из приложения-аутентификатора или нажмите «Отмена».",
-                    markup=ui.twofa_menu(),
-                )
-                return
+            # Код 2FA не должен оставаться в истории чата, даже если он неверный.
             try:
                 await message.delete()
             except TelegramError as exc:
                 logger.debug("Не удалось удалить сообщение с кодом: %s", exc)
+            code = "".join(ch for ch in (message.text or "") if ch.isdigit())
+            if len(code) != 6:
+                await self._show_2fa(
+                    message,
+                    "❌ Нужны 6 цифр из приложения-аутентификатора "
+                    "или нажмите «Отмена».",
+                )
+                return
             await self._complete_2fa(message, user.id, code)
             return
         pending_search = self._log_searches.pop(user.id, None)
