@@ -43,7 +43,14 @@ class CommandMixin(BotBase):
         allowed = self.is_admin(user.id if user else None)
         # Гостю кнопки не показываем вовсе: каждая из них всё равно ответила бы
         # отказом — это только вводит в заблуждение.
-        await self._reply_screen(
+        logger.info(
+            "cmd_start: chat=%s type=%s user=%s admin=%s",
+            message.chat_id,
+            message.chat.type,
+            user.id if user else None,
+            allowed,
+        )
+        sent = await self._reply_screen(
             message,
             "🛰 <b>StackSentry</b> — бот мониторинга сервера и панели 3X-UI.\n\n"
             + (
@@ -54,6 +61,11 @@ class CommandMixin(BotBase):
                 else "⛔ Этот бот доступен только администратору сервера."
             ),
             markup=self._main_menu(True) if allowed else None,
+            force_new=True,
+        )
+        logger.info(
+            "cmd_start: ответ отправлен, message_id=%s",
+            getattr(sent, "message_id", None),
         )
 
     async def cmd_help(
@@ -424,6 +436,7 @@ class CommandMixin(BotBase):
         markup: InlineKeyboardMarkup | None = None,
         reply_to: Message | None = None,
         bot: Any = None,
+        force_new: bool = False,
     ) -> Message | None:
         """Показывает экран в том же сообщении, не создавая новое окно."""
         if not chat_id:
@@ -440,7 +453,9 @@ class CommandMixin(BotBase):
             )
         try:
             target = bot or self.app.bot
-            previous = await self._tracked_screen(chat_id) if locked else 0
+            previous = 0
+            if locked and not force_new:
+                previous = await self._tracked_screen(chat_id)
             # Главное правило: сначала правим существующий экран. Даже если
             # Telegram не даёт удалять старые сообщения, новые не появляются.
             if (
@@ -506,6 +521,7 @@ class CommandMixin(BotBase):
         text: str,
         *,
         markup: InlineKeyboardMarkup | None = None,
+        force_new: bool = False,
     ) -> Message | None:
         """Показывает новый экран и убирает предыдущий, чтобы меню не копились."""
         return await self._show_screen(
@@ -514,6 +530,7 @@ class CommandMixin(BotBase):
             markup=markup,
             reply_to=message,
             bot=message.get_bot(),
+            force_new=force_new,
         )
 
     async def _show_run_log(
