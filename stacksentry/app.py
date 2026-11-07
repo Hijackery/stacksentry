@@ -39,7 +39,7 @@ from telegram.ext import (
     filters,
 )
 
-from . import ui
+from . import __version__, ui
 from .actions import (
     ACTION_COMMAND,
     ACTION_DIST_UPGRADE,
@@ -261,7 +261,8 @@ class MonitorBot(CommandMixin, JobsMixin):
         except (TelegramError, asyncio.TimeoutError) as exc:
             logger.warning("Не удалось удалить webhook: %s", exc)
         logger.info(
-            "Бот запущен. Сервисы: %s, панель: %s, админов: %s",
+            "StackSentry %s запущен. Сервисы: %s, панель: %s, админов: %s",
+            __version__,
             ", ".join(self.settings.services),
             _safe_endpoint(self.settings.api_base),
             len(self.settings.admin_ids),
@@ -279,6 +280,7 @@ class MonitorBot(CommandMixin, JobsMixin):
                 when=5,
                 name="flush-alerts-startup",
             )
+        logger.info("Инициализация завершена, запускаю polling")
         if self.settings.webapp_enabled and self.settings.webapp_public_origin:
             try:
                 await asyncio.wait_for(
@@ -1374,6 +1376,7 @@ def main() -> None:
     app.run_polling(
         allowed_updates=Update.ALL_TYPES,
         drop_pending_updates=True,
+        bootstrap_retries=-1,
     )
 
 
