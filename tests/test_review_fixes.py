@@ -471,7 +471,7 @@ def test_alert_actions_offer_restart_for_service_finding(
     assert "logs:x-ui" in data
 
 
-def test_alert_menu_has_mute_and_actions() -> None:
+def test_alert_menu_has_feedback_and_snooze() -> None:
     from telegram import InlineKeyboardButton
 
     markup = ui.alert_menu(
@@ -480,12 +480,15 @@ def test_alert_menu_has_mute_and_actions() -> None:
                 "♻️ Рестарт x-ui", callback_data="ask:restart_service:x-ui"
             )
         ],
-        mute_key="service:x-ui",
+        alert_key="service:x-ui",
     )
     data = [b.callback_data for row in markup.inline_keyboard for b in row]
 
     assert "ask:restart_service:x-ui" in data
-    assert "mute:service:x-ui" in data
+    assert "falsepos:service:x-ui" in data
+    assert "snooze:10:service:x-ui" in data
+    assert "snooze:180:service:x-ui" in data
+    assert "mute:service:x-ui" not in data
     assert "refresh" in data
 
 

@@ -191,6 +191,26 @@ def test_empty_subscriptions() -> None:
     assert "недоступен" in ui.render_subscriptions([])
 
 
+def test_language_menu_and_english_labels() -> None:
+    from stacksentry.i18n import set_language
+
+    try:
+        set_language("en")
+        labels = [
+            button.text for row in ui.main_menu(True).inline_keyboard for button in row
+        ]
+        assert "🔄 Refresh" in labels
+        assert "🌐 Language" in labels
+        lang_menu = [
+            button.callback_data
+            for row in ui.language_menu("en").inline_keyboard
+            for button in row
+        ]
+        assert "lang:ru" in lang_menu and "lang:en" in lang_menu
+    finally:
+        set_language("ru")
+
+
 def test_history_render() -> None:
     conn = sqlite3.connect(":memory:")
     conn.row_factory = sqlite3.Row

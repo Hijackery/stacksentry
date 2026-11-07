@@ -326,6 +326,7 @@ def create_app(
     async def meta(user_id: int = Depends(current_user)) -> dict[str, Any]:
         return {
             "version": __version__,
+            "language": config.settings.language,
             "panel_enabled": config.settings.panel_enabled,
             "services": list(config.settings.services),
             "require_2fa": config.settings.require_2fa,

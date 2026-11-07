@@ -169,6 +169,7 @@ class Settings:
     alert_confirm_checks: int = 2
     alert_recovery_checks: int = 2
     log_json: bool = False
+    language: str = "ru"
 
     panel_type: str = "3x-ui"
     panel_username: str = ""
@@ -298,6 +299,7 @@ def _build_settings() -> Settings:
         log_path=Path(env_str("LOG_PATH", str(BASE_DIR / "logs" / "bot.log"))),
         log_level=env_str("LOG_LEVEL", "INFO").upper(),
         log_json=env_bool("LOG_JSON", False),
+        language=env_str("LANGUAGE", "ru").strip().lower() or "ru",
         # Нормализуем сразу при чтении: даже если в .env вручную вписали
         # «https://host:5580/» или «/panel/», адрес API склеится без «//».
         panel_url=env_str("PANEL_URL").rstrip("/"),
@@ -600,6 +602,8 @@ def _validate(settings: Settings) -> list[str]:
         problems.append("CPU_WARN должен быть меньше CPU_CRIT")
     if settings.mem_warn >= settings.mem_crit:
         problems.append("MEM_WARN должен быть меньше MEM_CRIT")
+    if settings.language not in {"ru", "en"}:
+        problems.append("LANGUAGE: поддерживаются ru и en")
     if settings.disk_warn >= settings.disk_crit:
         problems.append("DISK_WARN должен быть меньше DISK_CRIT")
     if settings.inode_warn >= settings.inode_crit:

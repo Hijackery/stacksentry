@@ -24,6 +24,7 @@ from .app_utils import (
     _send_with_retry,
     _user_id,
 )
+from .i18n import tr
 from .inventory import detect_stack
 from .updates import check_for_update
 
@@ -52,13 +53,23 @@ class CommandMixin(BotBase):
         )
         sent = await self._reply_screen(
             message,
-            "🛰 <b>StackSentry</b> — бот мониторинга сервера и панели 3X-UI.\n\n"
-            + (
-                "Показывает состояние системы, сервисов, панели, подписок и "
-                "трафика, а также позволяет перезапускать сервисы и обновлять "
-                "систему.\n\nНачните с /status или выберите раздел кнопками."
-                if allowed
-                else "⛔ Этот бот доступен только администратору сервера."
+            tr(
+                "🛰 <b>StackSentry</b> — бот мониторинга сервера и панели 3X-UI.\n\n"
+                + (
+                    "Показывает состояние системы, сервисов, панели, подписок и "
+                    "трафика, а также позволяет перезапускать сервисы и обновлять "
+                    "систему.\n\nНачните с /status или выберите раздел кнопками."
+                    if allowed
+                    else "⛔ Этот бот доступен только администратору сервера."
+                ),
+                "🛰 <b>StackSentry</b> — server, panel and VPN monitoring bot.\n\n"
+                + (
+                    "Shows system, service, panel, subscription and traffic state, "
+                    "and lets you restart services and update the system.\n\n"
+                    "Start with /status or choose a section below."
+                    if allowed
+                    else "⛔ This bot is available only to the server administrator."
+                ),
             ),
             markup=self._main_menu(True) if allowed else None,
             force_new=True,
@@ -124,14 +135,21 @@ class CommandMixin(BotBase):
         panel = ui.panel_title(self.settings.panel_type)
         panel_state = "API включён" if self.settings.panel_enabled else "monitor-only"
         os_name = self.platform.os_name or self.platform.os_id or "ОС неизвестна"
-        return (
+        return tr(
             "🛰 <b>StackSentry</b> "
             f"{ui.esc(__version__)}\n"
             f"Python {ui.esc(sys.version.split()[0])} · "
             f"{ui.esc(os_name)}\n"
             f"init: {ui.esc(self.platform.init or '?')} · "
             f"пакеты: {ui.esc(self.platform.package_manager or '?')}\n"
-            f"Панель: {ui.esc(panel)} ({panel_state})"
+            f"Панель: {ui.esc(panel)} ({panel_state})",
+            "🛰 <b>StackSentry</b> "
+            f"{ui.esc(__version__)}\n"
+            f"Python {ui.esc(sys.version.split()[0])} · "
+            f"{ui.esc(os_name)}\n"
+            f"init: {ui.esc(self.platform.init or '?')} · "
+            f"packages: {ui.esc(self.platform.package_manager or '?')}\n"
+            f"Panel: {ui.esc(panel)} ({panel_state})",
         )
 
     async def cmd_version(

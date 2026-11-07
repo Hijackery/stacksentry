@@ -37,6 +37,12 @@ CREATE TABLE IF NOT EXISTS alert_mutes (
     until REAL NOT NULL
 );
 
+CREATE TABLE IF NOT EXISTS alert_feedback (
+    key TEXT PRIMARY KEY,
+    false_positive_count INTEGER NOT NULL DEFAULT 0,
+    last_false_positive_at REAL
+);
+
 CREATE TABLE IF NOT EXISTS audit_log (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     ts REAL NOT NULL,
@@ -109,6 +115,12 @@ CREATE TABLE IF NOT EXISTS alert_candidates (
     state TEXT NOT NULL,
     seen INTEGER NOT NULL,
     first_seen REAL NOT NULL,
+    updated_at REAL NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS user_language (
+    user_id INTEGER PRIMARY KEY,
+    language TEXT NOT NULL,
     updated_at REAL NOT NULL
 );
 """
@@ -530,6 +542,26 @@ class Storage:
         with self._lock:
             self.conn.execute("DELETE FROM bot_meta WHERE key = ?", (key,))
 
+    # ---------------------------------------------------------- user language
+
+    def get_user_language(self, user_id: int, default: str = "ru") -> str:
+        with self._lock:
+            row = self.conn.execute(
+                "SELECT language FROM user_language WHERE user_id = ?",
+                (user_id,),
+            ).fetchone()
+        return str(row["language"]) if row else default
+
+    def set_user_language(self, user_id: int, language: str) -> None:
+        with self._lock:
+            self.conn.execute(
+                "INSERT INTO user_language (user_id, language, updated_at) "
+                "VALUES (?, ?, ?) "
+                "ON CONFLICT(user_id) DO UPDATE SET "
+                "language = excluded.language, updated_at = excluded.updated_at",
+                (user_id, language, time.time()),
+            )
+
     # ---------------------------------------------------------- screen state
 
     def get_screen_message(self, chat_id: int) -> int:
@@ -637,6 +669,47 @@ class Storage:
                 self.conn.execute("DELETE FROM alert_mutes WHERE key = ?", (key,))
                 return False
             return True
+
+    def record_false_positive(self, key: str) -> int:
+        """Учит правило осторожнее: считает подтверждённые ложные срабатывания."""
+        now = time.time()
+        with self._lock:
+            self.conn.execute(
+                "INSERT INTO alert_feedback "
+                "(key, false_positive_count, last_false_positive_at) "
+                "VALUES (?, 1, ?) "
+                "ON CONFLICT(key) DO UPDATE SET "
+                "false_positive_count = false_positive_count + 1, "
+                "last_false_positive_at = excluded.last_false_positive_at",
+                (key, now),
+            )
+            row = self.conn.execute(
+                "SELECT false_positive_count FROM alert_feedback WHERE key = ?",
+                (key,),
+            ).fetchone()
+        return int(row["false_positive_count"]) if row else 1
+
+    def false_positive_count(self, key: str) -> int:
+        with self._lock:
+            row = self.conn.execute(
+                "SELECT false_positive_count FROM alert_feedback WHERE key = ?",
+                (key,),
+            ).fetchone()
+        return int(row["false_positive_count"]) if row else 0
+
+    def make_alert_due(self, key: str) -> None:
+        """После паузы разрешает напоминание сразу, не ожидая cooldown."""
+        with self._lock:
+            self.conn.execute(
+                "UPDATE alert_state SET notified_at = NULL WHERE key = ?", (key,)
+            )
+
+    def dismiss_pending_alerts(self, key: str) -> None:
+        with self._lock:
+            self.conn.execute(
+                "DELETE FROM alert_outbox WHERE state_key = ? AND sent_at IS NULL",
+                (key,),
+            )
 
     def prune_mutes(self) -> None:
         with self._lock:

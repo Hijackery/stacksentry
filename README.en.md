@@ -16,7 +16,7 @@ Tailscale), sends alerts and shows subscriptions. Risky actions (restart, system
 upgrade, reboot) happen only from a confirmed button and only for an
 administrator.
 
-Current version: **1.1.10**. The project is public:
+Current version: **1.2.0**. The project is public:
 [documentation](docs/README.md), [security policy](SECURITY.md). Updates come
 from `main` via the in-bot “Check for updates” button or
 `sudo stacksentry-menu update`; GitHub Releases and tags are not used.
@@ -78,13 +78,13 @@ matters to Telegram and stays quiet when everything is fine.
 |---|---|
 | **Monitoring** | CPU, RAM, swap, disk, network, load; services; panel and core; panel/VPN inventory; users, subscriptions and traffic |
 | **Panels** | API for 3X-UI, Marzban, Marzneshin, PasarGuard, Remnawave, S-UI, Hiddify, Outline; others detected as service/port/process |
-| **Alerts** | hysteresis without flapping, cooldown, an “I know, until morning” mute; restart and log buttons right on the alert |
+| **Alerts** | hysteresis and cooldown, false-positive learning, 10/30/60/180 minute snooze; restart and log buttons right on the alert |
 | **Actions** | service and panel core restart, package updates, OS release upgrade (APT), reboot, allow-listed commands |
 | **Updates** | `main` check and an “Update StackSentry” button with confirmation and 2FA; no GitHub Releases or tags |
 | **History** | hourly CPU/RAM/disk averages for 24 hours, 7 or 30 days; p95 and peaks |
 | **Install** | one command, an adaptive wizard for OS/services/panel, unattended mode, self-check |
 | **Universality** | systemd, OpenRC, SysVinit; `apt`/`dnf`/`yum`/`zypper`/`pacman`/`apk`/`xbps`/`emerge`/`eopkg`/`pkg`; Python 3.10+ |
-| **Mini App** | read-only Telegram dashboard: overview, services, panel, traffic, subscriptions, history, terminal and built-in Help; Telegram login (+ TOTP when 2FA is enabled) |
+| **Mini App** | Telegram dashboard: overview, server, services, panel, traffic, subscriptions, history, terminal and Help; charts, drill-downs, search, RU/EN language |
 | **Terminal** | `stacksentry-menu` handles settings, diagnostics, restart, log and update; secrets are masked |
 | **Security** | a dedicated unprivileged user, a narrow sudoers list, confirmations and an audit log for risky actions |
 
@@ -108,7 +108,8 @@ Status failed, SubState failed
 
 [♻️ Restart x-ui] [📜 x-ui log]
 [📊 Current state] [🏠 Menu]
-[😴 I know, until morning]
+[🚫 False positive]
+[⏱ 10 min] [⏱ 30 min] [⏱ 1 h] [⏱ 3 h]
 ```
 
 An action result with the return code and a contextual button:
@@ -476,7 +477,8 @@ look manually: `sudo stacksentry-menu apt-logs`.
 
 `/status` starts with a verdict; details are hidden behind “📋 Details”. Metrics
 are aligned in a monospace block, and time is labelled “server time”. Alerts carry
-`♻️ Restart`, `📜 Log` and `😴 I know, until morning`, an 8-hour mute stored in
+`♻️ Restart`, `📜 Log`, `🚫 False positive` and a 10/30/60/180 minute pause;
+false positives are stored in SQLite and make the rule more cautious.
 SQLite that survives restarts.
 
 ## `stacksentry-menu` settings menu
@@ -626,6 +628,7 @@ over the file.
 | `ALERT_CONFIRM_CHECKS` | consecutive checks needed to confirm an alert |
 | `ALERT_RECOVERY_CHECKS` | consecutive checks needed to confirm recovery |
 | `ALERT_COOLDOWN` | how often an active alert repeats, seconds |
+| `LANGUAGE` | default bot and Mini App language: `ru` or `en` |
 | `ALERT_CRITICAL_CHAT_ID` | separate chat for critical |
 | `ALERT_CRITICAL_TOPIC_ID` | topic in the critical chat |
 | `ALERT_WARNING_CHAT_ID` | separate chat for warning |
@@ -679,7 +682,7 @@ metric opens 24h/7d/30d history with p95 and peaks, a check shows the cause and
 what to do, and a subscription opens the client and traffic. The header has a
 single search across sections, services, and subscriptions.
 
-Updates can be requested from the Updates tab. The request goes to a shared queue,
+Updates can be requested from Help. The request goes to a shared queue,
 the bot asks for confirmation in Telegram, and 2FA requires a fresh code. The
 webapp then shows stages and progress, surviving a webapp restart.
 

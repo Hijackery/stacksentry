@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup, WebAppInfo
 
+from .i18n import tr
 from .settings import Settings
 from .ui_common import (
     LOG_WITH_ERRORS,
@@ -54,7 +55,11 @@ def update_menu(info: UpdateInfo | None = None) -> InlineKeyboardMarkup:
             ]
         )
     rows.append(
-        [InlineKeyboardButton("🔄 Проверить снова", callback_data="update_check")]
+        [
+            InlineKeyboardButton(
+                tr("🔄 Проверить снова", "🔄 Check again"), callback_data="update_check"
+            )
+        ]
     )
     rows.append([home_button()])
     return InlineKeyboardMarkup(rows)
@@ -78,6 +83,19 @@ def web_update_menu(request_id: str) -> InlineKeyboardMarkup:
     )
 
 
+def language_menu(current: str = "ru") -> InlineKeyboardMarkup:
+    rows: list[list[InlineKeyboardButton]] = []
+    buttons = []
+    for value, label in (("ru", "🇷🇺 Русский"), ("en", "🇬🇧 English")):
+        prefix = "• " if value == current else ""
+        buttons.append(
+            InlineKeyboardButton(f"{prefix}{label}", callback_data=f"lang:{value}")
+        )
+    rows.append(buttons)
+    rows.append([home_button()])
+    return InlineKeyboardMarkup(rows)
+
+
 def version_menu() -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(
         [
@@ -98,7 +116,7 @@ def help_menu(*, webapp_url: str = "") -> InlineKeyboardMarkup:
             InlineKeyboardButton(
                 "🔄 Проверить обновления", callback_data="update_check"
             ),
-            InlineKeyboardButton("🛰 Версия", callback_data="version"),
+            InlineKeyboardButton(tr("🛰 Версия", "🛰 Version"), callback_data="version"),
         ]
     ]
     if webapp_url:
@@ -116,7 +134,7 @@ def help_menu(*, webapp_url: str = "") -> InlineKeyboardMarkup:
 
 def home_button() -> InlineKeyboardButton:
     """Кнопка выхода в главное меню — есть на каждом экране, где её легко потерять."""
-    return InlineKeyboardButton("🏠 В меню", callback_data="home")
+    return InlineKeyboardButton(tr("🏠 В меню", "🏠 Main menu"), callback_data="home")
 
 
 def main_menu(
@@ -129,10 +147,16 @@ def main_menu(
     """
     panel_enabled = True if settings is None else settings.panel_enabled
     buttons = [
-        [InlineKeyboardButton("🔄 Обновить", callback_data="refresh")],
         [
-            InlineKeyboardButton("🖥 Сервер", callback_data="server"),
-            InlineKeyboardButton("⚙️ Сервисы", callback_data="services"),
+            InlineKeyboardButton(
+                tr("🔄 Обновить", "🔄 Refresh"), callback_data="refresh"
+            )
+        ],
+        [
+            InlineKeyboardButton(tr("🖥 Сервер", "🖥 Server"), callback_data="server"),
+            InlineKeyboardButton(
+                tr("⚙️ Сервисы", "⚙️ Services"), callback_data="services"
+            ),
         ],
     ]
     if (
@@ -152,42 +176,70 @@ def main_menu(
     if panel_enabled:
         buttons.append(
             [
-                InlineKeyboardButton("🌐 Панель", callback_data="panel"),
-                InlineKeyboardButton("📊 Трафик", callback_data="traffic"),
+                InlineKeyboardButton(
+                    tr("🌐 Панель", "🌐 Panel"), callback_data="panel"
+                ),
+                InlineKeyboardButton(
+                    tr("📊 Трафик", "📊 Traffic"), callback_data="traffic"
+                ),
             ]
         )
         buttons.append(
             [
-                InlineKeyboardButton("🪪 Подписки", callback_data="subs"),
-                InlineKeyboardButton("📈 История", callback_data="history"),
+                InlineKeyboardButton(
+                    tr("🪪 Подписки", "🪪 Subscriptions"), callback_data="subs"
+                ),
+                InlineKeyboardButton(
+                    tr("📈 История", "📈 History"), callback_data="history"
+                ),
             ]
         )
     else:
         buttons.append(
             [
-                InlineKeyboardButton("🌐 Панель (не настроена)", callback_data="panel"),
-                InlineKeyboardButton("📈 История", callback_data="history"),
+                InlineKeyboardButton(
+                    tr("🌐 Панель (не настроена)", "🌐 Panel (not configured)"),
+                    callback_data="panel",
+                ),
+                InlineKeyboardButton(
+                    tr("📈 История", "📈 History"), callback_data="history"
+                ),
             ]
         )
     if is_admin:
         buttons.append(
-            [InlineKeyboardButton("🛠 Обслуживание", callback_data="maintenance")]
+            [
+                InlineKeyboardButton(
+                    tr("🛠 Обслуживание", "🛠 Maintenance"), callback_data="maintenance"
+                )
+            ]
         )
         buttons.append(
             [
-                InlineKeyboardButton("🔐 Безопасность", callback_data="security"),
-                InlineKeyboardButton("❓ Помощь", callback_data="help"),
+                InlineKeyboardButton(
+                    tr("🔐 Безопасность", "🔐 Security"), callback_data="security"
+                ),
+                InlineKeyboardButton(tr("❓ Помощь", "❓ Help"), callback_data="help"),
+            ]
+        )
+        buttons.append(
+            [
+                InlineKeyboardButton(
+                    tr("🌐 Язык", "🌐 Language"), callback_data="lang_menu"
+                )
             ]
         )
     else:
-        buttons.append([InlineKeyboardButton("❓ Помощь", callback_data="help")])
+        buttons.append(
+            [InlineKeyboardButton(tr("❓ Помощь", "❓ Help"), callback_data="help")]
+        )
     return InlineKeyboardMarkup(buttons)
 
 
 def security_menu(elevated: bool) -> InlineKeyboardMarkup:
     if elevated:
         action = InlineKeyboardButton(
-            "🔒 Заблокировать сейчас", callback_data="security:lock"
+            tr("🔒 Заблокировать сейчас", "🔒 Lock now"), callback_data="security:lock"
         )
     else:
         action = InlineKeyboardButton(
@@ -196,7 +248,11 @@ def security_menu(elevated: bool) -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(
         [
             [action],
-            [InlineKeyboardButton("🔄 Обновить", callback_data="security")],
+            [
+                InlineKeyboardButton(
+                    tr("🔄 Обновить", "🔄 Refresh"), callback_data="security"
+                )
+            ],
             [home_button()],
         ]
     )
@@ -206,8 +262,13 @@ def twofa_menu() -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(
         [
             [
-                InlineKeyboardButton("❌ Отмена", callback_data="security:cancel"),
-                InlineKeyboardButton("❓ Где взять код", callback_data="security:help"),
+                InlineKeyboardButton(
+                    tr("❌ Отмена", "❌ Cancel"), callback_data="security:cancel"
+                ),
+                InlineKeyboardButton(
+                    tr("❓ Где взять код", "❓ Where to get the code"),
+                    callback_data="security:help",
+                ),
             ],
             [home_button()],
         ]
@@ -363,22 +424,50 @@ def result_menu(
 def alert_menu(
     actions: list[InlineKeyboardButton] | None = None,
     *,
-    mute_key: str = "",
+    alert_key: str = "",
 ) -> InlineKeyboardMarkup:
-    """Кнопки под алертом: починить, посмотреть, «знаю, до утра»."""
+    """Кнопки под алертом: действие, обучение и пауза до напоминания."""
     rows: list[list[InlineKeyboardButton]] = []
     if actions:
         rows.append(actions)
+    if alert_key:
+        rows.append(
+            [
+                InlineKeyboardButton(
+                    tr("🚫 Ложное срабатывание", "🚫 False positive"),
+                    callback_data=f"falsepos:{alert_key}",
+                )
+            ]
+        )
+        rows.append(
+            [
+                InlineKeyboardButton(
+                    tr("⏱ 10 мин", "⏱ 10 min"),
+                    callback_data=f"snooze:10:{alert_key}",
+                ),
+                InlineKeyboardButton(
+                    tr("⏱ 30 мин", "⏱ 30 min"),
+                    callback_data=f"snooze:30:{alert_key}",
+                ),
+                InlineKeyboardButton(
+                    tr("⏱ 1 ч", "⏱ 1 h"),
+                    callback_data=f"snooze:60:{alert_key}",
+                ),
+                InlineKeyboardButton(
+                    tr("⏱ 3 ч", "⏱ 3 h"),
+                    callback_data=f"snooze:180:{alert_key}",
+                ),
+            ]
+        )
     rows.append(
         [
-            InlineKeyboardButton("📊 Текущее состояние", callback_data="refresh"),
-            InlineKeyboardButton("🏠 В меню", callback_data="home"),
+            InlineKeyboardButton(
+                tr("📊 Текущее состояние", "📊 Current state"),
+                callback_data="refresh",
+            ),
+            InlineKeyboardButton(tr("🏠 В меню", "🏠 Main menu"), callback_data="home"),
         ]
     )
-    if mute_key:
-        rows.append(
-            [InlineKeyboardButton("😴 Знаю, до утра", callback_data=f"mute:{mute_key}")]
-        )
     return InlineKeyboardMarkup(rows)
 
 

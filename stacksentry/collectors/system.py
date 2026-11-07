@@ -36,9 +36,15 @@ class SystemCollector:
         # cpu_percent(percpu=False) уже отдаёт загрузку всей системы в 0..100.
         # Делить на число ядер нельзя: на 8 ядрах 100% превращались в 12.5%,
         # и алерты CPU_WARN/CPU_CRIT не срабатывали никогда.
-        cpu_percent = min(100.0, psutil.cpu_percent(interval=CPU_SAMPLE_SECONDS))
+        cores = psutil.cpu_percent(interval=CPU_SAMPLE_SECONDS, percpu=True)
+        cores = tuple(min(100.0, float(value)) for value in cores) if cores else ()
+        cpu_percent = sum(cores) / len(cores) if cores else 0.0
         virtual = psutil.virtual_memory()
         swap = psutil.swap_memory()
+        try:
+            freq = psutil.cpu_freq()
+        except (OSError, psutil.Error):
+            freq = None
         try:
             disk = psutil.disk_usage(self.disk_path)
         except (OSError, psutil.Error):
@@ -87,6 +93,11 @@ class SystemCollector:
             # но в контейнерах может быть запрещено — это не повод ронять сбор.
             connections = -1
 
+        try:
+            load1, load5, load15 = os.getloadavg()
+        except (OSError, AttributeError):
+            load1 = load5 = load15 = 0.0
+
         return SystemMetrics(
             cpu_percent=round(cpu_percent, 1),
             mem_percent=round(virtual.percent, 1),
@@ -94,7 +105,9 @@ class SystemCollector:
             swap_percent=round(swap.percent, 1),
             disk_percent=round(disk.percent, 1) if disk else 0.0,
             disk_free_bytes=disk.free if disk else 0,
-            load1=round(self.load1(), 2),
+            load1=round(load1, 2),
+            load5=round(load5, 2),
+            load15=round(load15, 2),
             uptime_seconds=time.time() - psutil.boot_time(),
             tcp_connections=connections,
             net_sent_bytes=net.bytes_sent if net else 0,
@@ -103,5 +116,13 @@ class SystemCollector:
             net_down_bps=round(down_bps, 1),
             inode_percent=round(inode_percent, 1),
             inode_free=inode_free,
+            cpu_cores=tuple(round(value, 1) for value in cores),
+            cpu_count=len(cores) or (psutil.cpu_count() or 0),
+            cpu_freq_mhz=round(freq.current, 0) if freq else 0.0,
+            mem_available_bytes=virtual.available,
+            swap_total_bytes=swap.total,
+            swap_used_bytes=swap.used,
+            disk_total_bytes=disk.total if disk else 0,
+            disk_used_bytes=disk.used if disk else 0,
             collected_at=now,
         )

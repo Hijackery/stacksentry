@@ -347,6 +347,7 @@ class AlertEngine:
             # чтобы не было качелей «упало/восстановилось».
             required = (
                 self.settings.alert_confirm_checks
+                + min(3, self.storage.false_positive_count(key))
                 if new_state is not Severity.ok
                 else self.settings.alert_recovery_checks
             )

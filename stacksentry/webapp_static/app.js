@@ -11,9 +11,9 @@
   const tg = window.Telegram && window.Telegram.WebApp;
   const initData = hash.get("tgWebAppData") || (tg && tg.initData) || "";
   const BASE_TABS = [
-    ["overview", "Обзор"], ["services", "Службы"], ["panel", "Панель"],
+    ["overview", "Обзор"], ["server", "Сервер"], ["services", "Службы"], ["panel", "Панель"],
     ["traffic", "Трафик"], ["subs", "Подписки"], ["history", "История"],
-    ["updates", "Обновления"], ["help", "Помощь"],
+    ["help", "Помощь"],
   ];
 
   function readPins() {
@@ -56,6 +56,7 @@
     active: initialTab,
     snapshot: null,
     version: "",
+    lang: (() => { try { return localStorage.getItem("stacksentry.lang") || ""; } catch (_) { return ""; } })(),
     update: null,
     updateAt: 0,
     updateLoading: false,
@@ -117,6 +118,74 @@
     bad: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="9"></circle><path d="m9 9 6 6M15 9l-6 6"></path></svg>',
     inbox: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 5h16v14H4z"></path><path d="M4 14h4l2 3h4l2-3h4"></path></svg>',
   };
+
+  const EN_TABS = {
+    overview: "Overview", server: "Server", services: "Services", panel: "Panel",
+    traffic: "Traffic", subs: "Subscriptions", history: "History", help: "Help",
+    terminal: "Terminal",
+  };
+
+  const RU_EN = {
+    "Обзор": "Overview", "Сервер": "Server", "Службы": "Services",
+    "Панель": "Panel", "Трафик": "Traffic", "Подписки": "Subscriptions",
+    "История": "History", "Помощь": "Help", "Терминал": "Terminal",
+    "Всё в норме": "All good", "Есть проблема": "Problem",
+    "Требует внимания": "Needs attention", "Загрузка…": "Loading…",
+    "Обновлено": "Updated", "служб": "services", "Нет данных": "No data",
+    "Клиенты": "Clients", "Службы": "Services", "Все службы": "All services",
+    "Панель не подключена": "Panel not connected", "Панель недоступна": "Panel unavailable",
+    "Панель отвечает": "Panel responds", "Состояние API": "API state",
+    "Версия": "Version", "Задержка": "Latency", "Версия панели": "Panel version",
+    "API-токен": "API token", "Топ клиентов": "Top clients",
+    "Распределение трафика": "Traffic distribution", "Поиск": "Search",
+    "Настроить дашборд": "Customize dashboard", "Готово": "Done",
+    "Проверить обновления": "Check for updates", "Проверяю…": "Checking…",
+    "Обновить через бота": "Update via bot", "Запрашиваю…": "Requesting…",
+    "Обновления StackSentry": "StackSentry updates", "есть обновление": "update available",
+    "актуально": "up to date", "не проверено": "not checked", "ошибка": "error",
+    "выполняется": "in progress", "готово": "done", "остановлено": "stopped",
+    "Попробовать снова": "Try again", "Прогресс в Помощи": "Progress in Help",
+    "Индекс здоровья": "Health score", "Ядра CPU": "CPU cores", "Система": "System",
+    "Load average": "Load average", "Аптайм": "Uptime", "Прогноз диска": "Disk forecast",
+    "Нет данных о сервере": "No server data", "Язык": "Language",
+    "Обновить данные": "Refresh data", "Обновить": "Refresh",
+    "Повторить": "Retry", "Открыть отдельно": "Open separately",
+    "Терминал сервера": "Server terminal", "Нужен вход": "Sign in required",
+    "Подтвердите вход": "Confirm sign in", "Войти": "Sign in",
+    "Поиск по разделам, службам и подпискам": "Search sections, services and subscriptions",
+    "Выберите сервис": "Choose a service", "Журнал": "Journal",
+    "Состояние": "State", "С какого времени": "Since", "Рестартов": "Restarts",
+    "Память": "Memory", "В закладки": "Bookmark", "Убрать закладку": "Remove bookmark",
+    "Что делать": "What to do", "Идёт обновление": "Updating",
+    "Новая версия StackSentry": "New StackSentry version",
+  };
+
+  function t(ru, en) {
+    return state.lang === "en" ? en : ru;
+  }
+
+  function translateDom(root) {
+    if (state.lang !== "en" || !root) return;
+    const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT);
+    const nodes = [];
+    while (walker.nextNode()) nodes.push(walker.currentNode);
+    for (const node of nodes) {
+      const raw = node.nodeValue || "";
+      const trimmed = raw.trim();
+      if (RU_EN[trimmed]) node.nodeValue = raw.replace(trimmed, RU_EN[trimmed]);
+    }
+    for (const element of root.querySelectorAll("[placeholder], [title], [aria-label]")) {
+      for (const attr of ["placeholder", "title", "aria-label"]) {
+        const value = element.getAttribute(attr);
+        if (value && RU_EN[value]) element.setAttribute(attr, RU_EN[value]);
+      }
+    }
+  }
+
+  function updateLangButton() {
+    const button = $("lang");
+    if (button) button.textContent = state.lang === "en" ? "EN" : "RU";
+  }
 
   const UNAVAILABLE = {
     metrics: "метрики", services: "службы", panel: "панель", subs: "подписки",
@@ -357,41 +426,84 @@
     </section>`;
   }
 
-  function renderVersionCard() {
-    const info = state.update;
-    const current = state.version || (info && info.current_version) || "—";
-    let chip = "актуально";
-    let tone = "ok";
-    let detail = "Проверьте, есть ли новая версия в main.";
-    let primary = "";
-    if (state.updateRequest) {
-      const status = state.updateStatus || { stage: "Ожидает подтверждения", progress: 5 };
-      tone = "warn";
-      chip = "обновление";
-      detail = `${status.stage || "Выполняется"} · ${Math.round(Number(status.progress) || 0)}%`;
-      primary = '<button class="link-button" type="button" data-open-update>Прогресс в Помощи</button>';
-    } else if (info && info.update_available === true) {
-      tone = "warn";
-      chip = "есть обновление";
-      detail = `Доступна ${info.remote_version || info.remote_sha || "новая версия"}. Подтверждение придёт в Telegram.`;
-      primary = `<button class="primary" type="button" data-request-update ${state.updateRequesting ? "disabled" : ""}>${state.updateRequesting ? "Запрашиваю…" : "⬆️ Обновить через бота"}</button>`;
-    } else if (info && info.error) {
-      tone = "bad";
-      chip = "ошибка";
-      detail = info.error;
-    } else if (state.updateLoading) {
-      tone = "warn";
-      chip = "проверяю";
-      detail = "Сравниваю версию с main.";
-    }
-    return `<section class="card version-card" id="overview-version">
-      <div class="card-head"><h2>StackSentry ${esc(current)}</h2><span class="chip ${tone}">${esc(chip)}</span></div>
-      <p class="hint">${esc(detail)}</p>
-      <div class="version-actions">
-        <button class="ghost" type="button" data-check-update ${state.updateLoading ? "disabled" : ""}>${state.updateLoading ? "Проверяю…" : "Проверить обновления"}</button>
-        ${primary}
+  function healthScore() {
+    const s = state.snapshot;
+    if (!s) return 0;
+    const system = s.system || {};
+    let score = 100;
+    score -= Math.max(0, Number(system.cpu_percent || 0) - 60) * 0.35;
+    score -= Math.max(0, Number(system.mem_percent || 0) - 65) * 0.3;
+    score -= Math.max(0, Number(system.disk_percent || 0) - 70) * 0.45;
+    score -= (s.services || []).filter((item) => !item.active).length * 18;
+    score -= (s.warnings || []).length * 4;
+    score -= (s.checks || []).filter((item) => item.severity === "critical").length * 12;
+    return Math.round(clamp(score));
+  }
+
+  function renderHealthRing() {
+    const score = healthScore();
+    const tone = score >= 80 ? "ok" : score >= 55 ? "warn" : "bad";
+    const length = 2 * Math.PI * 42;
+    const offset = length * (1 - score / 100);
+    return `<section class="card health-card">
+      <div class="health-ring ${tone}">
+        <svg viewBox="0 0 100 100" role="img" aria-label="Health score ${score} из 100">
+          <circle cx="50" cy="50" r="42" class="ring-track"></circle>
+          <circle cx="50" cy="50" r="42" class="ring-value" stroke-dasharray="${length}" stroke-dashoffset="${offset}"></circle>
+        </svg>
+        <strong>${score}</strong><span>/100</span>
+      </div>
+      <div>
+        <h2>${t("Индекс здоровья", "Health score")}</h2>
+        <p class="hint">${t("Учитывает CPU, RAM, диск, службы, предупреждения и проверки.", "Considers CPU, RAM, disk, services, warnings and checks.")}</p>
       </div>
     </section>`;
+  }
+
+  function renderCoreBars(system) {
+    const cores = system.cpu_cores || [];
+    if (!cores.length) return `<div class="hint">${t("Нет данных по ядрам.", "No per-core data.")}</div>`;
+    return `<div class="core-grid">${cores.map((value, index) => `<div class="core-row">
+      <span>CPU ${index + 1}</span>
+      <div class="meter"><i class="${tone(value)}" style="width:${clamp(value)}%"></i></div>
+      <strong>${fmtPercent(value)}</strong>
+    </div>`).join("")}</div>`;
+  }
+
+  function renderServer() {
+    const s = state.snapshot;
+    const system = s.system;
+    if (!system) return renderHero("bad", t("Нет данных о сервере", "No server data"), t("Сборщик метрик не ответил.", "The metrics collector did not respond."), true);
+    const cards = [
+      renderMetric("CPU", fmtPercent(system.cpu_percent), system.cpu_percent, `${system.cpu_count || "?"} ядер · ${Math.round(system.cpu_freq_mhz || 0)} МГц`, "cpu"),
+      renderMetric("RAM", fmtPercent(system.mem_percent), system.mem_percent, `${fmtBytes(system.mem_available_bytes)} доступно из ${fmtBytes(system.mem_total_bytes)}`, "mem"),
+      renderMetric("Диск", fmtPercent(system.disk_percent), system.disk_percent, `${fmtBytes(system.disk_used_bytes)} из ${fmtBytes(system.disk_total_bytes)}`, "disk"),
+      renderMetric("Inode", fmtPercent(system.inode_percent), system.inode_percent, "файлы и inode"),
+    ].join("");
+    return [
+      renderHero(healthScore() >= 80 ? "ok" : healthScore() >= 55 ? "warn" : "bad", t("Сервер", "Server"), t("Подробные метрики и состояние железа.", "Detailed metrics and hardware state."), true),
+      renderHealthRing(),
+      `<div class="stat-grid">${cards}</div>`,
+      `<section class="card"><div class="card-head"><h2>${t("Ядра CPU", "CPU cores")}</h2><span class="chip">${system.cpu_count || 0}</span></div>${renderCoreBars(system)}</section>`,
+      `<section class="card"><div class="card-head"><h2>${t("Система", "System")}</h2></div><div class="kv">
+        <div class="kv-row"><span>${t("Load average", "Load average")}</span><strong>${Number(system.load1 || 0).toFixed(2)} / ${Number(system.load5 || 0).toFixed(2)} / ${Number(system.load15 || 0).toFixed(2)}</strong></div>
+        <div class="kv-row"><span>Swap</span><strong>${fmtPercent(system.swap_percent)} · ${fmtBytes(system.swap_used_bytes)} / ${fmtBytes(system.swap_total_bytes)}</strong></div>
+        <div class="kv-row"><span>${t("TCP-соединения", "TCP connections")}</span><strong>${system.tcp_connections < 0 ? t("н/д", "n/a") : fmtNumber(system.tcp_connections)}</strong></div>
+        <div class="kv-row"><span>${t("Сеть", "Network")}</span><strong>↑ ${fmtBytes(system.net_up_bps)}/s · ↓ ${fmtBytes(system.net_down_bps)}/s</strong></div>
+        <div class="kv-row"><span>${t("Аптайм", "Uptime")}</span><strong>${fmtUptime(system.uptime_seconds)}</strong></div>
+        <div class="kv-row"><span>${t("Прогноз диска", "Disk forecast")}</span><strong>${system.disk_forecast_days != null ? `~${Math.round(system.disk_forecast_days)} ${t("дн.", "days")}` : t("стабильно", "stable")}</strong></div>
+      </div></section>`,
+    ].join("");
+  }
+
+  function fmtUptime(seconds) {
+    const s = Math.max(0, Math.round(Number(seconds) || 0));
+    const days = Math.floor(s / 86400);
+    const hours = Math.floor((s % 86400) / 3600);
+    const minutes = Math.floor((s % 3600) / 60);
+    if (days) return `${days} д ${hours} ч`;
+    if (hours) return `${hours} ч ${minutes} мин`;
+    return `${minutes} мин`;
   }
 
   function renderOverview() {
@@ -421,7 +533,6 @@
       : "";
     return [
       renderHero(verdict.tone, verdict.title, heroText),
-      renderVersionCard(),
       `<div class="stat-grid">${metrics.join("")}</div>`,
       `<div class="quick-grid">
         ${renderQuick("Клиенты", fmtNumber(s.active_clients))}
@@ -491,14 +602,14 @@
         chip = "не сравнить";
       }
       details = `<div class="kv">
-        <div class="kv-row"><span>Установлено</span><strong>${esc(info.current_version || "—")} · ${esc(info.current_sha || "—")}</strong></div>
-        <div class="kv-row"><span>В main</span><strong>${esc(info.remote_version || "—")} · ${esc(info.remote_sha || "—")}</strong></div>
-        ${info.remote_date ? `<div class="kv-row"><span>Последний commit</span><strong>${esc(info.remote_date)}</strong></div>` : ""}
+        <div class="kv-row"><span>${t("Установлено", "Installed")}</span><strong>${esc(info.current_version || "—")} · ${esc(info.current_sha || "—")}</strong></div>
+        <div class="kv-row"><span>${t("В main", "In main")}</span><strong>${esc(info.remote_version || "—")} · ${esc(info.remote_sha || "—")}</strong></div>
+        ${info.remote_date ? `<div class="kv-row"><span>${t("Последний commit", "Latest commit")}</span><strong>${esc(info.remote_date)}</strong></div>` : ""}
       </div>
       ${info.remote_message ? `<p class="hint">${esc(info.remote_message)}</p>` : ""}
-      <p class="hint">Обновление запускается из webapp, но подтверждается в Telegram. Так привилегированное действие не покидает бота.</p>`;
+      <p class="hint">${t("Обновление запускается из webapp, но подтверждается в Telegram. Так привилегированное действие не покидает бота.", "The update is requested in the webapp but confirmed in Telegram, so the privileged action stays in the bot.")}</p>`;
     } else {
-      details = '<p class="hint">Проверьте, есть ли новая версия StackSentry в main.</p>';
+      details = '<p class="hint">${t("Проверьте, есть ли новая версия StackSentry в main.", "Check whether a new StackSentry version is available in main.")}</p>';
     }
     const install = info && info.update_available === true
       ? `<button class="primary" type="button" data-request-update ${state.updateRequesting ? "disabled" : ""}>${state.updateRequesting ? "Запрашиваю…" : "⬆️ Обновить через бота"}</button>`
@@ -511,49 +622,9 @@
     </section>`;
   }
 
-  function refreshUpdateBanner() {
-    const banner = $("update-banner");
-    if (!banner) return;
-    if (state.updateRequest) {
-      const status = state.updateStatus || { stage: "Ожидает подтверждения", progress: 5 };
-      banner.hidden = false;
-      banner.innerHTML = `<span><strong>Обновление StackSentry</strong> · ${esc(status.stage || "выполняется")}</span>
-        <button class="link-button" type="button" data-update-help>Прогресс</button>`;
-      return;
-    }
-    const info = state.update;
-    if (!info || info.update_available !== true) {
-      banner.hidden = true;
-      banner.innerHTML = "";
-      return;
-    }
-    banner.hidden = false;
-    banner.innerHTML = `<span><strong>Новая версия StackSentry</strong> · ${esc(info.current_version || "—")} → ${esc(info.remote_version || info.remote_sha || "—")}</span>
-      <button class="link-button" type="button" data-update-help>Подробнее</button>`;
-  }
-
-  function updateTabBadge() {
-    const tab = $("tab-updates");
-    if (!tab) return;
-    const has = state.update && state.update.update_available === true;
-    const dot = tab.querySelector(".tab-dot");
-    if (has && !dot) {
-      const badge = document.createElement("span");
-      badge.className = "tab-dot";
-      badge.setAttribute("aria-label", "Есть обновление");
-      tab.appendChild(badge);
-    } else if (!has && dot) {
-      dot.remove();
-    }
-  }
-
   function refreshUpdateCard() {
     const card = $("update-card");
     if (card) card.outerHTML = renderUpdateCard();
-    const overview = $("overview-version");
-    if (overview) overview.outerHTML = renderVersionCard();
-    refreshUpdateBanner();
-    updateTabBadge();
   }
 
   async function loadUpdate(force = false, refresh = false) {
@@ -629,19 +700,18 @@
     poll();
   }
 
-  function renderUpdatesPage() {
-    const current = state.version || (state.update && state.update.current_version) || "—";
-    if (!state.update && !state.updateLoading) setTimeout(() => loadUpdate(false), 0);
-    return renderHero("ok", "Обновления StackSentry", `Установленная версия: ${current}`) +
-      renderUpdateCard() +
-      `<section class="card">
-        <div class="card-head"><h2>Как это работает</h2></div>
-        <p class="hint">Webapp только проверяет версию и создаёт запрос. Само обновление подтверждается в Telegram, при 2FA нужен свежий код. После подтверждения здесь появятся этапы и прогресс.</p>
-      </section>`;
-  }
-
   function renderHelp() {
-    const cards = [
+    const cards = state.lang === "en" ? [
+      ["Overview", "Server verdict, CPU/RAM/disk, clients and traffic. The star pins a service; Customize hides extra blocks. Refresh reloads the snapshot."],
+      ["Services", "systemd and panel status. If a service is down, open it in the bot and check the journal."],
+      ["Panel", "Panel API availability, version and xray state. If the API is not configured, the section says so."],
+      ["Traffic and subscriptions", "Inbounds, clients, remaining traffic and expiry. Subscriptions have search and sorting."],
+      ["History", "CPU/RAM/disk averages for 24 hours, 7 or 30 days, p95 and peaks."],
+      ["Terminal", "Shown only when the web terminal is enabled. It is a separate session with its own TOTP; enter the code on first open."],
+      ["2FA", "When 2FA is enabled, Mini App login requires a 6-digit code and dangerous bot actions require confirmation. When disabled, TOTP is not requested. Secret and QR: <code>sudo stacksentry-menu totp</code>."],
+      ["Bot", "Commands: <code>/status</code>, <code>/subs</code>, <code>/traffic</code>, <code>/history</code>, <code>/maint</code>, <code>/help</code>. Dangerous actions work only in the administrator private chat."],
+      ["Updates", "Check for updates here, in the bot Help section, or with <code>sudo stacksentry-menu update-check</code>. Install from the bot or <code>sudo stacksentry-menu update</code>."],
+    ] : [
       ["Обзор", "Вердикт по серверу, CPU/RAM/диск, клиенты и трафик. Звёздочка закрепляет службу, «⚙️ Настроить» скрывает лишние блоки. Кнопка «Обновить» перезапрашивает снимок."],
       ["Службы", "Статус systemd-служб и панели. Если служба не работает — откройте её в боте и посмотрите журнал."],
       ["Панель", "Доступность API панели, версия и состояние xray. Если API не настроен, раздел честно скажет об этом."],
@@ -657,7 +727,7 @@
       <div class="help-body"><p class="hint">${text}</p></div>
     </details>`).join("");
     if (!state.update && !state.updateLoading) setTimeout(() => loadUpdate(false), 0);
-    return renderHero("ok", "Помощь", "Короткая инструкция по разделам Mini App и боту.") +
+    return renderHero("ok", t("Помощь", "Help"), t("Короткая инструкция по разделам Mini App и боту.", "A short guide to Mini App sections and the bot.")) +
       renderUpdateCard() + cardsHtml;
   }
 
@@ -743,6 +813,25 @@
     </div>`;
   }
 
+  function renderTrafficDonut(inbounds) {
+    const items = inbounds.filter((item) => Number(item.used_bytes) > 0).sort((a, b) => Number(b.used_bytes) - Number(a.used_bytes)).slice(0, 6);
+    const total = items.reduce((sum, item) => sum + Number(item.used_bytes || 0), 0);
+    if (!items.length || total <= 0) return "";
+    const colors = ["#58c7ff", "#45d483", "#f6c453", "#c084fc", "#ff8a65", "#8dd6c5"];
+    let offset = 0;
+    const circles = items.map((item, index) => {
+      const percent = Number(item.used_bytes) / total * 100;
+      const length = 2 * Math.PI * 40;
+      const segment = length * percent / 100;
+      const circle = `<circle cx="50" cy="50" r="40" fill="none" stroke="${colors[index % colors.length]}" stroke-width="14" stroke-dasharray="${segment} ${length - segment}" stroke-dashoffset="${-offset}" transform="rotate(-90 50 50)"></circle>`;
+      offset += segment;
+      return circle;
+    }).join("");
+    const legend = items.map((item, index) => `<div class="legend-row"><span class="legend-dot" style="background:${colors[index % colors.length]}"></span><span>${esc(item.remark || "—")}</span><strong>${fmtBytes(item.used_bytes)}</strong></div>`).join("");
+    return `<section class="card"><div class="card-head"><h2>${t("Распределение трафика", "Traffic distribution")}</h2><span class="chip">${items.length}</span></div>
+      <div class="donut-wrap"><svg class="donut" viewBox="0 0 100 100" role="img" aria-label="Распределение трафика по inbound">${circles}</svg><div class="donut-legend">${legend}</div></div></section>`;
+  }
+
   function renderTraffic() {
     const s = state.snapshot;
     const inbounds = s.inbounds || [];
@@ -773,6 +862,7 @@
         ${renderQuick("Трафик", fmtBytes(s.total_used_bytes))}
       </div>`,
       inboundsBlock,
+      renderTrafficDonut(inbounds),
       `<section class="card">
         <div class="card-head"><h2>Топ клиентов</h2><span class="chip">${top.length}</span></div>
         <div class="list">${topRows}</div>
@@ -1038,13 +1128,14 @@
   function openDetail(kind, id) {
     state.detail = { kind, id };
     state.searchOpen = false;
-    render();
-    window.scrollTo({ top: 0, behavior: "smooth" });
+    render(true);
+    scrollTopSmooth();
   }
 
   function closeDetail() {
     state.detail = null;
-    render();
+    render(true);
+    scrollTopSmooth();
   }
 
   function detailBack() {
@@ -1225,17 +1316,35 @@
     panel.setAttribute("aria-labelledby", `tab-${state.active}`);
   }
 
-  async function render() {
+  function reducedMotion() {
+    return window.matchMedia && window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+  }
+
+  function animateView() {
+    if (reducedMotion()) return;
+    view.classList.remove("view-enter");
+    void view.offsetWidth;
+    view.classList.add("view-enter");
+  }
+
+  function scrollTopSmooth() {
+    if (window.scrollY <= 0) return;
+    window.scrollTo({ top: 0, behavior: reducedMotion() ? "auto" : "smooth" });
+  }
+
+  async function render(animate = false) {
     if (!state.snapshot) return;
     updateHeader();
     updateViews();
     if (state.searchOpen) {
       view.innerHTML = renderSearch();
       applySearchFilter();
+      if (animate) animateView();
       return;
     }
     if (state.detail) {
       await renderDetail();
+      if (animate) animateView();
       return;
     }
     if (state.active === "terminal") {
@@ -1243,27 +1352,26 @@
       return;
     }
     if (state.active === "overview") view.innerHTML = renderOverview();
+    else if (state.active === "server") view.innerHTML = renderServer();
     else if (state.active === "services") view.innerHTML = renderServices();
     else if (state.active === "panel") view.innerHTML = renderPanel();
     else if (state.active === "traffic") view.innerHTML = renderTraffic();
     else if (state.active === "subs") renderSubs();
-    else if (state.active === "updates") view.innerHTML = renderUpdatesPage();
     else if (state.active === "help") view.innerHTML = renderHelp();
     else if (state.active === "history") {
       view.innerHTML = renderHistoryShell();
       await loadHistory();
     }
+    if (animate) animateView();
   }
 
   function renderTabs() {
     $("tabs").innerHTML = state.tabs.map(([key, label]) => {
       const active = key === state.active;
-      const badge = key === "updates" && state.update && state.update.update_available === true
-        ? '<span class="tab-dot" aria-label="Есть обновление"></span>'
-        : "";
+      const text = state.lang === "en" ? (EN_TABS[key] || label) : label;
       return `<button id="tab-${key}" class="tab${active ? " active" : ""}" type="button"
         role="tab" aria-selected="${active}" aria-controls="${key === "terminal" ? "terminal-view" : "view"}"
-        tabindex="${active ? 0 : -1}" data-tab="${key}">${esc(label)}${badge}</button>`;
+        tabindex="${active ? 0 : -1}" data-tab="${key}">${esc(text)}</button>`;
     }).join("");
     const current = $(`tab-${state.active}`);
     if (current) current.scrollIntoView({ block: "nearest", inline: "nearest" });
@@ -1286,11 +1394,12 @@
     state.historyToken += 1;
     syncTabHash();
     renderTabs();
+    scrollTopSmooth();
     if (focus) {
       const current = $(`tab-${key}`);
       if (current) current.focus();
     }
-    render();
+    render(true);
   }
 
   class ApiError extends Error {
@@ -1428,6 +1537,8 @@
       const meta = await api("/api/meta");
       state.metaLoaded = true;
       state.version = meta.version || "";
+      if (!state.lang) state.lang = meta.language || "ru";
+      updateLangButton();
       const build = $("build");
       if (build) build.textContent = state.version ? `v${state.version}` : "";
       state.terminalOrigin = meta.terminal_origin || "";
@@ -1461,7 +1572,6 @@
       await loadMeta();
       await render();
       if (state.updateRequest && !state.updateTimer) startUpdatePolling();
-      if (!state.update && !state.updateLoading) loadUpdate(false);
     } catch (error) {
       if (error.status === 401) {
         if (state.authRetry > 0) {
@@ -1497,17 +1607,13 @@
   view.setAttribute("role", "tabpanel");
   terminalView.setAttribute("role", "tabpanel");
 
-  $("update-banner").addEventListener("click", (event) => {
-    if (event.target.closest("[data-update-help]")) switchTab("help");
-  });
-
   $("search").addEventListener("click", () => {
     state.searchOpen = !state.searchOpen;
     if (state.searchOpen) {
       state.detail = null;
       state.searchQuery = "";
     }
-    render();
+    render(true);
     if (state.searchOpen) {
       const input = $("global-search");
       if (input) input.focus();
@@ -1547,7 +1653,7 @@
     }
     if (event.target.closest("[data-search-close]")) {
       state.searchOpen = false;
-      render();
+      render(true);
       return;
     }
     const searchTab = event.target.closest("[data-search-tab]");
@@ -1587,10 +1693,6 @@
       const value = Number(hoursButton.dataset.metricHours);
       state.metricHours = [24, 168, 720].includes(value) ? value : 24;
       render();
-      return;
-    }
-    if (event.target.closest("[data-open-update]")) {
-      switchTab("help");
       return;
     }
     if (event.target.closest("[data-dashboard-toggle]")) {
@@ -1680,6 +1782,20 @@
     if (state.timer) clearInterval(state.timer);
   });
 
+  new MutationObserver(() => translateDom(view)).observe(view, {
+    childList: true,
+    subtree: true,
+  });
+
+  $("lang").addEventListener("click", () => {
+    state.lang = state.lang === "en" ? "ru" : "en";
+    try { localStorage.setItem("stacksentry.lang", state.lang); } catch (_) { /* ignore */ }
+    updateLangButton();
+    renderTabs();
+    render(true);
+  });
+
+  updateLangButton();
   syncTabHash();
   renderTabs();
   load();

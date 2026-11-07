@@ -253,6 +253,13 @@ def test_update_ignores_installed_prefix_as_source() -> None:
     assert 'if [ "$UPDATE" -eq 1 ]' in text
 
 
+def test_shell_menu_can_change_language() -> None:
+    menu = (BASE_DIR / "install" / "stacksentry-menu").read_text(encoding="utf-8")
+    assert "LANGUAGE" in menu
+    assert "29|Язык интерфейса" in menu
+    assert "29) menu_edit_key LANGUAGE" in menu
+
+
 def test_installer_creates_self_update_unit_for_bot_updates() -> None:
     text = (BASE_DIR / "install.sh").read_text(encoding="utf-8")
     assert "stacksentry-self-update:_self_update_worker" in text

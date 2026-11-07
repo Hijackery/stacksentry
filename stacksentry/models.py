@@ -32,6 +32,16 @@ class SystemMetrics:
     inode_percent: float = 0.0
     inode_free: int = 0
     disk_forecast_days: float | None = None
+    cpu_cores: tuple[float, ...] = ()
+    cpu_count: int = 0
+    cpu_freq_mhz: float = 0.0
+    load5: float = 0.0
+    load15: float = 0.0
+    mem_available_bytes: int = 0
+    swap_total_bytes: int = 0
+    swap_used_bytes: int = 0
+    disk_total_bytes: int = 0
+    disk_used_bytes: int = 0
     collected_at: float = field(default_factory=time.time)
 
 

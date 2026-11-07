@@ -79,6 +79,9 @@ from .ui_menus import (
     home_button as home_button,
 )
 from .ui_menus import (
+    language_menu as language_menu,
+)
+from .ui_menus import (
     log_variants_menu as log_variants_menu,
 )
 from .ui_menus import (

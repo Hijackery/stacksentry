@@ -150,6 +150,7 @@ def test_terminal_tab_origin_and_csp(
     assert meta.status_code == 200
     assert meta.json()["terminal_origin"] == "https://term.example.com"
     assert meta.json()["version"]
+    assert meta.json()["language"] in {"ru", "en"}
     policy = meta.headers["Content-Security-Policy"]
     assert "frame-src 'self' https://term.example.com" in policy
 
@@ -408,24 +409,23 @@ def test_mini_app_has_help_tab() -> None:
         encoding="utf-8"
     )
     assert '["help", "Помощь"]' in js
-    assert '["updates", "Обновления"]' in js
-    assert "function renderUpdatesPage()" in js
     assert "function renderHelp()" in js
     assert 'state.active === "help"' in js
     assert "Если 2FA выключена, TOTP не запрашивается нигде" in js
-    assert "update-banner" in js
-    assert "Новая версия StackSentry" in js
     assert "loadUpdate" in js
     assert 'input.value = ""' in js
     assert "stacksentry.pins" in js
     assert "Настроить дашборд" in js
     assert "renderServiceDetail" in js
+    assert "renderServer" in js
+    assert "health-ring" in js
+    assert "renderTrafficDonut" in js
+    assert "stacksentry.lang" in js
     assert "renderMetricDetail" in js
     assert "global-search" in js
     assert "data-request-update" in js
     assert "/api/update/status" in js
     assert "update-progress" in js
-    assert "data-open-update" in js
 
 
 def test_cookie_flags(make_settings: Callable[..., Settings], storage: Storage) -> None:

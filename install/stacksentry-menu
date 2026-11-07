@@ -86,6 +86,7 @@ MENU_ROWS=(
     "27|Статус Mini App и адрес для /setdomain"
     "s|"
     "28|Удалить бота"
+    "29|Язык интерфейса бота и Mini App (ru/en)"
     "0|Выход"
 )
 
@@ -197,7 +198,7 @@ EDITABLE_KEYS=(
     CPU_WARN CPU_CRIT MEM_WARN MEM_CRIT DISK_WARN DISK_CRIT
     ALERT_HYSTERESIS ALERT_COOLDOWN EXPIRING_SOON_DAYS
     CHECK_INTERVAL ACTION_COOLDOWN CONFIRM_TTL COMMAND_TIMEOUT
-    COMMAND_ALLOWLIST LOG_LEVEL
+    COMMAND_ALLOWLIST LOG_LEVEL LANGUAGE
 )
 
 #: Разумные подсказки для пошагового изменения.
@@ -213,6 +214,7 @@ declare -A KEY_HINT=(
     [PANEL_PASSWORD]="пароль администратора Marzban"
     [SERVICES]="юниты под наблюдением, через запятую"
     [LOG_LEVEL]="DEBUG, INFO, WARNING или ERROR"
+    [LANGUAGE]="язык интерфейса: ru или en"
 )
 
 is_editable() {
@@ -259,6 +261,12 @@ check_value() {
             case "$value" in
                 3x-ui|marzban|marzneshin|pasarguard|remnawave|s-ui|hiddify|outline) ;;
                 *) die "PANEL_TYPE: 3x-ui, marzban, marzneshin, pasarguard, remnawave, s-ui, hiddify или outline" ;;
+            esac
+            ;;
+        LANGUAGE)
+            case "$value" in
+                ru|en) ;;
+                *) die "LANGUAGE: поддерживаются ru и en" ;;
             esac
             ;;
         PANEL_USERNAME)
@@ -796,6 +804,7 @@ menu() {
                     *) info "Отменено" ;;
                 esac
                 ;;
+            29) menu_edit_key LANGUAGE ;;
             0) exit 0 ;;
             *) warn "Нет такого пункта: $choice (0-$max)" ;;
         esac

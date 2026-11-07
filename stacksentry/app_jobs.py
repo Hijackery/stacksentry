@@ -699,7 +699,7 @@ class JobsMixin(BotBase):
             chunks = _split_alerts(findings)
             markup = ui.alert_menu(
                 _alert_actions(findings, self.settings),
-                mute_key=findings[0].state_key,
+                alert_key=findings[0].state_key,
             )
             delivered = True
             for chat_id, thread_id in route:

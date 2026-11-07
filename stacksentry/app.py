@@ -99,6 +99,8 @@ from .app_utils import (
 from .app_utils import (
     _split_alerts as _split_alerts,
 )
+from .i18n import normalize as normalize_language
+from .i18n import set_language, tr
 from .inventory import detect_stack, platform_info
 from .models import MonitorSnapshot
 from .monitor import Monitor
@@ -136,6 +138,7 @@ class MonitorBot(CommandMixin, JobsMixin):
         self._screen_locks: dict[int, asyncio.Lock] = {}
         self._updater_misses = 0
         self._updater_seen_running = False
+        self._user_langs: dict[int, str] = {}
         #: Кто сейчас ищет строку в журнале: user_id -> unit.
         self._log_searches: dict[int, str] = {}
         #: Step-up 2FA: ожидание кода, неудачи и блокировка после перебора.
@@ -442,6 +445,17 @@ class MonitorBot(CommandMixin, JobsMixin):
     async def _log_update(
         self, update: Update, _context: ContextTypes.DEFAULT_TYPE
     ) -> None:
+        user = update.effective_user
+        language = self.settings.language
+        if user is not None:
+            cached = self._user_langs.get(user.id)
+            if cached is None:
+                cached = await asyncio.to_thread(
+                    self.storage.get_user_language, user.id, language
+                )
+                self._user_langs[user.id] = cached
+            language = cached
+        set_language(language)
         chat = update.effective_chat
         message = update.effective_message
         text = getattr(message, "text", "") or ""
@@ -593,6 +607,55 @@ class MonitorBot(CommandMixin, JobsMixin):
         } or data.startswith("subs:"):
             await self._edit(query, "⏳ Собираю данные…")
 
+        if data.startswith("falsepos:"):
+            key = data[9:]
+            count = await asyncio.to_thread(self.storage.record_false_positive, key)
+            delay = min(7 * 86400, (6 * 3600) * (2 ** min(count - 1, 4)))
+            until = await asyncio.to_thread(self.storage.mute, key, delay)
+            await asyncio.to_thread(self.storage.make_alert_due, key)
+            await asyncio.to_thread(self.storage.dismiss_pending_alerts, key)
+            check_at = time.strftime("%H:%M", time.localtime(until))
+            await self._edit(
+                query,
+                tr(
+                    "🚫 Учту как ложное срабатывание.\n"
+                    f"Правило стало осторожнее: подтверждений {count}.\n"
+                    f"Следующая проверка после {check_at}.",
+                    "🚫 Marked as a false positive.\n"
+                    f"The rule is now more cautious: confirmations {count}.\n"
+                    f"Next check after {check_at}.",
+                ),
+                markup=self._main_menu(user_id),
+            )
+            return
+        if data.startswith("snooze:"):
+            parts = data.split(":", 2)
+            if len(parts) == 3 and parts[1].isdigit():
+                minutes = int(parts[1])
+                key = parts[2]
+                if minutes in {10, 30, 60, 180}:
+                    until = await asyncio.to_thread(
+                        self.storage.mute, key, minutes * 60
+                    )
+                    await asyncio.to_thread(self.storage.make_alert_due, key)
+                    await asyncio.to_thread(self.storage.dismiss_pending_alerts, key)
+                    await self._edit(
+                        query,
+                        tr(
+                            f"⏱ Напомню через {minutes} мин. "
+                            "Перед напоминанием бот заново проверит состояние сервиса.",
+                            f"⏱ I will remind you in {minutes} min. "
+                            "The bot will re-check the service before reminding.",
+                        ),
+                        markup=self._main_menu(user_id),
+                    )
+                    return
+            await self._edit(
+                query,
+                tr("Неизвестное время напоминания.", "Unknown reminder time."),
+                markup=self._main_menu(user_id),
+            )
+            return
         if data.startswith("mute:"):
             key = data[5:]
             until = await asyncio.to_thread(self.storage.mute, key, MUTE_HOURS * 3600)
@@ -605,6 +668,29 @@ class MonitorBot(CommandMixin, JobsMixin):
             )
             return
 
+        if data == "lang_menu":
+            await self._edit(
+                query,
+                tr(
+                    "🌐 <b>Язык интерфейса</b>\n\nВыберите язык бота.",
+                    "🌐 <b>Interface language</b>\n\nChoose the bot language.",
+                ),
+                markup=ui.language_menu(
+                    self._user_langs.get(user_id, self.settings.language)
+                ),
+            )
+            return
+        if data.startswith("lang:"):
+            language = normalize_language(data[5:])
+            await asyncio.to_thread(self.storage.set_user_language, user_id, language)
+            self._user_langs[user_id] = language
+            set_language(language)
+            await self._edit(
+                query,
+                tr("🌐 Язык изменён на русский.", "🌐 Language switched to English."),
+                markup=self._main_menu(user_id),
+            )
+            return
         if data.startswith("webupdate_cancel:"):
             request_id = data.split(":", 1)[1]
             if await self._cancel_web_update(request_id):

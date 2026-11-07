@@ -8,6 +8,7 @@ from datetime import datetime, timezone
 
 from .alerts import Finding
 from .hints import panel_token_hint
+from .i18n import get_language
 from .inventory import Detected
 from .models import (
     InboundSummary,
@@ -601,6 +602,62 @@ def render_2fa_prompt(title: str, lock_left: float = 0.0) -> str:
     return "\n".join(lines)
 
 
+def _render_help_en(is_admin: bool) -> str:
+    lines = [
+        "🛰 <b>StackSentry</b>",
+        "Monitors the server, panels and VPN stack and reports problems.",
+        "",
+        "🚀 <b>Start here</b>",
+        "• <code>/status</code> — server verdict, metrics, services and panel.",
+        "• <code>/help</code> — this guide. The ❓ Help button does the same.",
+        "• Every screen has a 🏠 Main menu button.",
+        "• Commands: /status, /traffic, /subs, /stack, /history, /logs, "
+        "/audit, /maint, /run, /version, /updatecheck.",
+        "",
+        "📊 <b>Sections</b>",
+        "🖥 <b>Server</b> — CPU, RAM, swap, disk, network and load average.",
+        "⚙️ <b>Services</b> — systemd units with restart and journal actions.",
+        "🌐 <b>Panel</b> — panel availability, API, version and xray state.",
+        "📊 <b>Traffic</b> — inbounds, clients and traffic usage.",
+        "🪪 <b>Subscriptions</b> — expiry and traffic limits.",
+        "📈 <b>History</b> — CPU/RAM/disk for 24 hours, 7 or 30 days.",
+        "📜 <b>Journal</b> — service logs, errors and text search.",
+        "🗂 <b>Audit</b> — administrator actions and denied attempts.",
+        "📱 <b>Mini App</b> — overview, server, services, panel, traffic, "
+        "subscriptions, history, terminal and help.",
+        "",
+        "🛠 <b>Maintenance</b> (administrator only)",
+        "• Update package lists and the system.",
+        "• Restart the panel core when supported by the panel API.",
+        "• Reboot with confirmation. Long actions run in the background.",
+        "• StackSentry updates: ❓ Help → 🔄 Check for updates.",
+        "",
+        "💻 <b>Server command</b>",
+        "Send a whitelisted command or <code>/run df -h</code>. "
+        "Only safe commands from <code>COMMAND_ALLOWLIST</code>, without a shell.",
+        "",
+        "🔐 <b>Security</b>",
+        "• Commands and buttons work only in the administrator private chat.",
+        "• 2FA (TOTP) is optional for Mini App login and dangerous actions.",
+        "• The terminal uses a separate TOTP for every session.",
+        "• Confirmation tokens, audit log and secret masking are built in.",
+        "",
+        "🩺 <b>Troubleshooting</b>",
+        "1. Read the bot message: it contains the reason.",
+        "2. /services → Restart → Journal.",
+        "3. /stack shows what the bot actually found.",
+        "4. Logs: <code>journalctl -u stacksentry-bot -n 50</code>.",
+        "",
+        "📚 <b>Documentation</b> — github.com/Hijackery/stacksentry/tree/main/docs",
+    ]
+    if not is_admin:
+        return (
+            "\n".join(lines[:12])
+            + "\n\n⛔ Management is available to the administrator only."
+        )
+    return "\n".join(lines)
+
+
 def render_command_help(allowlist: tuple[str, ...]) -> str:
     """Список безопасных команд с описаниями, сгруппированный по темам."""
     if not allowlist:
@@ -638,6 +695,8 @@ def render_help(
     package_manager: str | None = None,
 ) -> str:
     """Полная инструкция простыми словами: разделы, действия, настройки."""
+    if get_language() == "en":
+        return _render_help_en(is_admin)
     panel_name = panel_title(settings.panel_type) if settings is not None else "3X-UI"
     pm = (
         package_manager

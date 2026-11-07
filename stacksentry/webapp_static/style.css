@@ -87,6 +87,11 @@ a { color: var(--link); }
   gap: 12px; min-height: 44px;
 }
 .header-actions { display: flex; align-items: center; gap: 6px; }
+.lang-button {
+  min-width: 40px; height: 40px; padding: 0 8px; border-radius: 12px;
+  border: 1px solid var(--border); background: var(--surface); color: var(--text);
+  font-size: 12px; font-weight: 750;
+}
 .brand-lockup { display: flex; align-items: center; gap: 10px; min-width: 0; }
 .brand-mark {
   width: 38px; height: 38px; flex: 0 0 auto; border-radius: 11px;
@@ -119,16 +124,6 @@ a { color: var(--link); }
 .icon-button:disabled { opacity: .55; cursor: default; }
 @keyframes spin { to { transform: rotate(360deg); } }
 
-.update-banner {
-  display: flex; align-items: center; justify-content: space-between; gap: 10px;
-  margin: 0 0 9px; padding: 9px 12px; border-radius: var(--radius-sm);
-  border: 1px solid color-mix(in srgb, var(--warn) 30%, transparent);
-  background: color-mix(in srgb, var(--warn) 12%, var(--surface));
-  color: var(--text); font-size: 12px;
-}
-.update-banner strong { color: var(--warn); }
-.update-banner button { flex: 0 0 auto; }
-
 .tabs {
   display: flex; gap: 2px; overflow-x: auto; scrollbar-width: none;
   padding: 8px 0 9px; scroll-snap-type: x proximity;
@@ -145,10 +140,6 @@ a { color: var(--link); }
   background: color-mix(in srgb, var(--accent) 14%, transparent);
 }
 .tab { display: inline-flex; align-items: center; gap: 5px; }
-.tab-dot {
-  width: 6px; height: 6px; border-radius: 50%; background: var(--warn);
-  box-shadow: 0 0 0 3px color-mix(in srgb, var(--warn) 15%, transparent);
-}
 .tab.active::after {
   content: ""; position: absolute; left: 12px; right: 12px; bottom: 2px;
   height: 2px; border-radius: 2px; background: var(--accent);
@@ -250,6 +241,30 @@ a { color: var(--link); }
 }
 .row-sub { color: var(--muted); font-size: 11px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .row-meta { color: var(--muted); font-size: 11px; text-align: right; white-space: nowrap; }
+.health-card { display: flex; align-items: center; gap: 16px; }
+.health-ring { position: relative; width: 108px; height: 108px; flex: 0 0 auto; display: grid; place-items: center; }
+.health-ring svg { width: 108px; height: 108px; transform: rotate(-90deg); }
+.health-ring circle { fill: none; stroke-width: 9; }
+.health-ring .ring-track { stroke: color-mix(in srgb, var(--text) 10%, transparent); }
+.health-ring .ring-value { stroke-linecap: round; transition: stroke-dashoffset .6s ease; }
+.health-ring.ok .ring-value { stroke: var(--ok); }
+.health-ring.warn .ring-value { stroke: var(--warn); }
+.health-ring.bad .ring-value { stroke: var(--bad); }
+.health-ring strong { position: absolute; font-size: 28px; line-height: 1; }
+.health-ring span { position: absolute; margin-top: 34px; color: var(--muted); font-size: 10px; }
+.health-card h2 { margin: 0 0 4px; font-size: 16px; }
+.health-card p { margin: 0; }
+.core-grid { display: grid; gap: 7px; }
+.core-row { display: grid; grid-template-columns: 54px minmax(0, 1fr) 46px; align-items: center; gap: 9px; font-size: 11px; }
+.core-row span { color: var(--muted); }
+.core-row strong { text-align: right; font-variant-numeric: tabular-nums; }
+.donut-wrap { display: flex; align-items: center; gap: 16px; flex-wrap: wrap; }
+.donut { width: 150px; height: 150px; flex: 0 0 auto; }
+.donut-legend { flex: 1 1 180px; display: grid; gap: 7px; min-width: 0; }
+.legend-row { display: grid; grid-template-columns: 9px minmax(0, 1fr) auto; align-items: center; gap: 7px; font-size: 12px; }
+.legend-row span:nth-child(2) { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.legend-row strong { font-variant-numeric: tabular-nums; }
+.legend-dot { width: 9px; height: 9px; border-radius: 50%; }
 .dashboard-bar {
   display: flex; align-items: center; justify-content: space-between;
   gap: 8px; padding: 0 2px;
@@ -400,10 +415,6 @@ a { color: var(--link); }
 }
 .card > .link-button { margin-top: 4px; }
 
-.version-card .version-actions {
-  display: flex; flex-wrap: wrap; gap: 8px; margin-top: 10px;
-}
-.version-card .version-actions > * { flex: 1 1 180px; }
 .tap-hint {
   display: inline-block; margin-top: 7px; color: var(--link);
   font-size: 11px; font-weight: 700;

@@ -220,6 +220,23 @@ def test_inode_threshold_and_health_checks(
     assert any(finding.rule is Rule.check for finding in checked)
 
 
+def test_false_positive_training_requires_more_confirmation(
+    make_settings: Callable[..., Settings], storage: Storage
+) -> None:
+    alerts = engine(
+        make_settings,
+        storage,
+        alert_confirm_checks=2,
+        alert_recovery_checks=1,
+    )
+    storage.record_false_positive("cpu")
+    # 2 базовых подтверждения + 1 за ложное срабатывание.
+    assert alerts.update(alerts.evaluate(snapshot(metrics(96.0)))) == []
+    assert alerts.update(alerts.evaluate(snapshot(metrics(96.0)))) == []
+    third = alerts.update(alerts.evaluate(snapshot(metrics(96.0))))
+    assert [finding.key for finding in third] == ["cpu"]
+
+
 def test_dead_service_is_critical(
     make_settings: Callable[..., Settings], storage: Storage
 ) -> None:
