@@ -510,6 +510,29 @@ async def test_previous_screen_is_edited_in_place(bot_app: MonitorBot) -> None:
     assert bot_app.storage.get_screen_message(7) == 50
 
 
+async def test_edit_timeout_falls_back_to_new_screen(bot_app: MonitorBot) -> None:
+    """Старый экран в удалённом чате не должен блокировать ответ."""
+    bot = AsyncMock()
+    bot.edit_message_text.side_effect = asyncio.TimeoutError
+
+    class FakeMessage:
+        chat_id = 7
+
+        def get_bot(self) -> AsyncMock:
+            return bot
+
+        async def reply_text(self, **_kwargs: object) -> object:
+            return SimpleNamespace(message_id=101)
+
+    bot_app._last_screen[7] = 50
+
+    sent = await bot_app._reply_screen(FakeMessage(), "ответ")  # type: ignore[arg-type]
+
+    assert sent is not None and sent.message_id == 101
+    assert bot.delete_message.await_args.args == (7, 50)
+    assert bot_app._last_screen[7] == 101
+
+
 async def test_screen_without_reply_passes_chat_id(bot_app: MonitorBot) -> None:
     """Фоновые экраны не отвечают на сообщение, но обязаны передать chat_id."""
     bot = AsyncMock()

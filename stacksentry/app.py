@@ -319,7 +319,9 @@ class MonitorBot(CommandMixin, JobsMixin):
         updater = self.app.updater
         if updater is None:
             return
-        if updater.running:
+        polling_task = getattr(updater, "_Updater__polling_task", None)
+        task_dead = polling_task is not None and polling_task.done()
+        if updater.running and not task_dead:
             self._updater_misses = 0
             if not self._updater_seen_running:
                 self._updater_seen_running = True
@@ -330,7 +332,15 @@ class MonitorBot(CommandMixin, JobsMixin):
         if self._updater_misses < 2:
             return
         self._updater_misses = 0
-        logger.error("Polling остановлен без ошибки, перезапускаю")
+        if task_dead and polling_task is not None:
+            error = None
+            if not polling_task.cancelled():
+                error = polling_task.exception()
+            logger.error("Polling task завершился: %r", error)
+            with suppress(Exception):
+                await updater.stop()
+        else:
+            logger.error("Polling остановлен без ошибки, перезапускаю")
         try:
             await updater.start_polling(
                 drop_pending_updates=True,

@@ -387,14 +387,21 @@ class CommandMixin(BotBase):
         if not chat_id or not message_id:
             return False
         try:
-            await (bot or self.app.bot).edit_message_text(
-                chat_id=chat_id,
-                message_id=message_id,
-                text=text,
-                parse_mode=ParseMode.HTML,
-                disable_web_page_preview=True,
-                reply_markup=markup,
+            await asyncio.wait_for(
+                (bot or self.app.bot).edit_message_text(
+                    chat_id=chat_id,
+                    message_id=message_id,
+                    text=text,
+                    parse_mode=ParseMode.HTML,
+                    disable_web_page_preview=True,
+                    reply_markup=markup,
+                ),
+                timeout=5,
             )
+        except asyncio.TimeoutError as exc:
+            # Старый экран мог остаться в удалённом чате: не ждём минутами.
+            logger.debug("Не удалось обновить сообщение действия: %s", exc)
+            return False
         except BadRequest as exc:
             # Повторная отрисовка того же экрана: это успех, а не повод
             # отправить второе сообщение.
@@ -431,8 +438,10 @@ class CommandMixin(BotBase):
             ):
                 return None
             if previous:
-                with suppress(TelegramError):
-                    await target.delete_message(chat_id, previous)
+                with suppress(TelegramError, asyncio.TimeoutError):
+                    await asyncio.wait_for(
+                        target.delete_message(chat_id, previous), timeout=3
+                    )
             sender = (
                 reply_to.reply_text if reply_to is not None else target.send_message
             )
@@ -570,8 +579,11 @@ class CommandMixin(BotBase):
             previous = await self._tracked_screen(chat_id)
             if previous and previous != message.message_id:
                 try:
-                    await message.get_bot().delete_message(chat_id, previous)
-                except TelegramError as exc:
+                    await asyncio.wait_for(
+                        message.get_bot().delete_message(chat_id, previous),
+                        timeout=3,
+                    )
+                except (TelegramError, asyncio.TimeoutError) as exc:
                     # Своё сообщение обычно удаляется; если Telegram не дал,
                     # продолжаем с нажатым экраном, чтобы действие не сорвалось.
                     logger.debug("Не удалось удалить лишний экран: %s", exc)
