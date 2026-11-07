@@ -507,6 +507,9 @@ async def test_post_init_sets_webapp_menu_button(
     bot_app._resume_apt_watches = AsyncMock()  # type: ignore[method-assign]
     setter = AsyncMock()
     monkeypatch.setattr(type(bot_app.app.bot), "set_chat_menu_button", setter)
+    monkeypatch.setattr(
+        type(bot_app.app.bot), "delete_webhook", AsyncMock(return_value=True)
+    )
 
     await bot_app._post_init(bot_app.app)
 
@@ -532,6 +535,9 @@ async def test_post_init_skips_webapp_menu_button_when_disabled(
     bot_app._resume_apt_watches = AsyncMock()  # type: ignore[method-assign]
     setter = AsyncMock()
     monkeypatch.setattr(type(bot_app.app.bot), "set_chat_menu_button", setter)
+    monkeypatch.setattr(
+        type(bot_app.app.bot), "delete_webhook", AsyncMock(return_value=True)
+    )
 
     await bot_app._post_init(bot_app.app)
     setter.assert_awaited_once()
@@ -539,6 +545,28 @@ async def test_post_init_skips_webapp_menu_button_when_disabled(
     from telegram import MenuButtonDefault
 
     assert isinstance(setter.await_args.kwargs["menu_button"], MenuButtonDefault)
+
+
+async def test_updater_watchdog_restarts_stopped_polling(
+    bot_app: MonitorBot,
+) -> None:
+    started: list[bool] = []
+
+    class FakeUpdater:
+        running = False
+
+        async def start_polling(self, **_kwargs: object) -> None:
+            started.append(True)
+            self.running = True
+
+    updater = FakeUpdater()
+    bot_app.app = SimpleNamespace(running=True, updater=updater)  # type: ignore[assignment]
+
+    await bot_app.job_watch_updater(None)  # type: ignore[arg-type]
+    assert started == []
+
+    await bot_app.job_watch_updater(None)  # type: ignore[arg-type]
+    assert started == [True]
 
 
 async def test_snapshot_cache_is_single_flight(

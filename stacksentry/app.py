@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import fcntl
 import logging
 import os
 import sqlite3
@@ -132,6 +133,7 @@ class MonitorBot(CommandMixin, JobsMixin):
         #: переживает рестарт бота.
         self._last_screen: dict[int, int] = {}
         self._screen_locks: dict[int, asyncio.Lock] = {}
+        self._updater_misses = 0
         #: Кто сейчас ищет строку в журнале: user_id -> unit.
         self._log_searches: dict[int, str] = {}
         #: Step-up 2FA: ожидание кода, неудачи и блокировка после перебора.
@@ -239,9 +241,21 @@ class MonitorBot(CommandMixin, JobsMixin):
             first=timedelta(minutes=10),
             name="prune",
         )
+        job_queue.run_repeating(
+            self.job_watch_updater,
+            interval=timedelta(seconds=30),
+            first=timedelta(seconds=30),
+            name="updater-watch",
+        )
         return app
 
     async def _post_init(self, _app: BotApplication) -> None:
+        # Оставшийся webhook превращает getUpdates в 409 Conflict, после чего
+        # Updater может замолчать, а процесс останется живым.
+        try:
+            await self.app.bot.delete_webhook(drop_pending_updates=True)
+        except TelegramError as exc:
+            logger.warning("Не удалось удалить webhook: %s", exc)
         logger.info(
             "Бот запущен. Сервисы: %s, панель: %s, админов: %s",
             ", ".join(self.settings.services),
@@ -273,6 +287,29 @@ class MonitorBot(CommandMixin, JobsMixin):
         await self.monitor.close()
         self.storage.close()
         logger.info("Бот остановлен")
+
+    async def job_watch_updater(self, _context: ContextTypes.DEFAULT_TYPE) -> None:
+        """Поднимает polling, если Updater умер, а процесс остался жив."""
+        if not self.app.running:
+            return
+        updater = self.app.updater
+        if updater is None:
+            return
+        if updater.running:
+            self._updater_misses = 0
+            return
+        self._updater_misses += 1
+        if self._updater_misses < 2:
+            return
+        self._updater_misses = 0
+        logger.error("Polling остановлен без ошибки, перезапускаю")
+        try:
+            await updater.start_polling(
+                drop_pending_updates=True,
+                allowed_updates=Update.ALL_TYPES,
+            )
+        except Exception:
+            logger.exception("Не удалось перезапустить polling")
 
     async def snapshot(self, *, force: bool = False) -> MonitorSnapshot:
         """Отдаёт свежий снимок или кэш, если он не старше SNAPSHOT_MAX_AGE.
@@ -1290,6 +1327,14 @@ def main() -> None:
         raise SystemExit(2) from exc
     _setup_logging(settings)
     _warn_on_unusual_api(settings)
+    # Один токен — один getUpdates. Иначе Telegram отдаёт 409 Conflict.
+    lock_path = settings.state_path.with_suffix(".lock")
+    lock_file = open(lock_path, "a+")  # noqa: SIM115
+    try:
+        fcntl.flock(lock_file, fcntl.LOCK_EX | fcntl.LOCK_NB)
+    except BlockingIOError:
+        logger.error("Уже запущен другой экземпляр бота: %s", lock_path)
+        raise SystemExit(1) from None
     if not settings.panel_verify_tls:
         logger.warning(
             "PANEL_VERIFY_TLS=false: TLS-сертификат панели не проверяется — "
@@ -1300,7 +1345,10 @@ def main() -> None:
     except StorageError as exc:
         logger.error("%s", exc)
         raise SystemExit(2) from exc
-    app.run_polling(allowed_updates=Update.ALL_TYPES)
+    app.run_polling(
+        allowed_updates=Update.ALL_TYPES,
+        drop_pending_updates=True,
+    )
 
 
 def _warn_on_unusual_api(settings: Settings) -> None:
