@@ -36,6 +36,7 @@ from telegram.ext import (
     ContextTypes,
     Defaults,
     MessageHandler,
+    TypeHandler,
     filters,
 )
 
@@ -202,6 +203,7 @@ class MonitorBot(CommandMixin, JobsMixin):
         ):
             app.add_handler(CommandHandler(name, handler))
         app.add_handler(CallbackQueryHandler(self.on_callback))
+        app.add_handler(TypeHandler(Update, self._log_update), group=-1)
         app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, self.on_text))
         app.add_error_handler(self.on_error)
 
@@ -255,7 +257,7 @@ class MonitorBot(CommandMixin, JobsMixin):
         # Updater может замолчать, а процесс останется живым.
         try:
             await asyncio.wait_for(
-                self.app.bot.delete_webhook(drop_pending_updates=True),
+                self.app.bot.delete_webhook(drop_pending_updates=False),
                 timeout=10,
             )
         except (TelegramError, asyncio.TimeoutError) as exc:
@@ -433,6 +435,19 @@ class MonitorBot(CommandMixin, JobsMixin):
         if self.settings.alert_chat_id:
             return [(self.settings.alert_chat_id, None)]
         return [(chat_id, None) for chat_id in self.settings.admin_ids]
+
+    async def _log_update(
+        self, update: Update, _context: ContextTypes.DEFAULT_TYPE
+    ) -> None:
+        chat = update.effective_chat
+        message = update.effective_message
+        text = getattr(message, "text", "") or ""
+        logger.info(
+            "Апдейт %s: chat=%s text=%r",
+            update.update_id,
+            _mask_id(chat.id if chat else None),
+            text[:60],
+        )
 
     async def on_error(
         self, update: object, context: ContextTypes.DEFAULT_TYPE
@@ -1385,7 +1400,7 @@ def main() -> None:
         raise SystemExit(2) from exc
     app.run_polling(
         allowed_updates=Update.ALL_TYPES,
-        drop_pending_updates=True,
+        drop_pending_updates=False,
         bootstrap_retries=-1,
     )
 
