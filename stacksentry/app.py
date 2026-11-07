@@ -134,6 +134,7 @@ class MonitorBot(CommandMixin, JobsMixin):
         self._last_screen: dict[int, int] = {}
         self._screen_locks: dict[int, asyncio.Lock] = {}
         self._updater_misses = 0
+        self._updater_seen_running = False
         #: Кто сейчас ищет строку в журнале: user_id -> unit.
         self._log_searches: dict[int, str] = {}
         #: Step-up 2FA: ожидание кода, неудачи и блокировка после перебора.
@@ -253,8 +254,11 @@ class MonitorBot(CommandMixin, JobsMixin):
         # Оставшийся webhook превращает getUpdates в 409 Conflict, после чего
         # Updater может замолчать, а процесс останется живым.
         try:
-            await self.app.bot.delete_webhook(drop_pending_updates=True)
-        except TelegramError as exc:
+            await asyncio.wait_for(
+                self.app.bot.delete_webhook(drop_pending_updates=True),
+                timeout=10,
+            )
+        except (TelegramError, asyncio.TimeoutError) as exc:
             logger.warning("Не удалось удалить webhook: %s", exc)
         logger.info(
             "Бот запущен. Сервисы: %s, панель: %s, админов: %s",
@@ -265,23 +269,41 @@ class MonitorBot(CommandMixin, JobsMixin):
         await self._verify_after_reboot()
         await self._resume_apt_watches()
         await self._finish_web_updates()
-        await self._flush_alert_outbox()
+        # Алерты и кнопку Mini App нельзя ждать до старта polling: при сетевом
+        # сбое post_init мог зависнуть на Telegram API и бот не начинал читать
+        # getUpdates. Ставим их в JobQueue, она стартует после updater.
+        queue = self.app.job_queue
+        if queue is not None:
+            queue.run_once(
+                self.job_flush_alerts,
+                when=5,
+                name="flush-alerts-startup",
+            )
         if self.settings.webapp_enabled and self.settings.webapp_public_origin:
             try:
-                await self.app.bot.set_chat_menu_button(
-                    menu_button=MenuButtonWebApp(
-                        text="Панель",
-                        web_app=WebAppInfo(url=self.settings.webapp_url),
-                    )
+                await asyncio.wait_for(
+                    self.app.bot.set_chat_menu_button(
+                        menu_button=MenuButtonWebApp(
+                            text="Панель",
+                            web_app=WebAppInfo(url=self.settings.webapp_url),
+                        )
+                    ),
+                    timeout=10,
                 )
-            except TelegramError as exc:
+            except (TelegramError, asyncio.TimeoutError) as exc:
                 logger.warning("Не удалось поставить кнопку Mini App: %s", exc)
         else:
             # Если Mini App выключили, убираем старую WebApp-кнопку у скрепки.
             try:
-                await self.app.bot.set_chat_menu_button(menu_button=MenuButtonDefault())
-            except TelegramError as exc:
+                await asyncio.wait_for(
+                    self.app.bot.set_chat_menu_button(menu_button=MenuButtonDefault()),
+                    timeout=10,
+                )
+            except (TelegramError, asyncio.TimeoutError) as exc:
                 logger.warning("Не удалось сбросить кнопку Mini App: %s", exc)
+
+    async def job_flush_alerts(self, _context: ContextTypes.DEFAULT_TYPE) -> None:
+        await self._flush_alert_outbox()
 
     async def _post_shutdown(self, _app: BotApplication) -> None:
         await self.monitor.close()
@@ -297,7 +319,11 @@ class MonitorBot(CommandMixin, JobsMixin):
             return
         if updater.running:
             self._updater_misses = 0
+            if not self._updater_seen_running:
+                self._updater_seen_running = True
+                logger.info("Polling активен")
             return
+        self._updater_seen_running = False
         self._updater_misses += 1
         if self._updater_misses < 2:
             return
