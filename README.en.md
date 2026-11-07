@@ -16,7 +16,7 @@ Tailscale), sends alerts and shows subscriptions. Risky actions (restart, system
 upgrade, reboot) happen only from a confirmed button and only for an
 administrator.
 
-Current version: **1.2.0**. The project is public:
+Current version: **1.3.0**. The project is public:
 [documentation](docs/README.md), [security policy](SECURITY.md). Updates come
 from `main` via the in-bot “Check for updates” button or
 `sudo stacksentry-menu update`; GitHub Releases and tags are not used.
@@ -84,7 +84,7 @@ matters to Telegram and stays quiet when everything is fine.
 | **History** | hourly CPU/RAM/disk averages for 24 hours, 7 or 30 days; p95 and peaks |
 | **Install** | one command, an adaptive wizard for OS/services/panel, unattended mode, self-check |
 | **Universality** | systemd, OpenRC, SysVinit; `apt`/`dnf`/`yum`/`zypper`/`pacman`/`apk`/`xbps`/`emerge`/`eopkg`/`pkg`; Python 3.10+ |
-| **Mini App** | Telegram dashboard: overview, server, services, panel, traffic, subscriptions, history, terminal and Help; charts, drill-downs, search, RU/EN language |
+| **Mini App** | Telegram dashboard: overview, server, services, panel, traffic, subscriptions, history, maintenance, terminal and Help; charts, drill-downs, search, RU/EN language |
 | **Terminal** | `stacksentry-menu` handles settings, diagnostics, restart, log and update; secrets are masked |
 | **Security** | a dedicated unprivileged user, a narrow sudoers list, confirmations and an audit log for risky actions |
 
@@ -741,6 +741,14 @@ another option.
   menu itself and is shown only to IDs from `TELEGRAM_ADMIN_IDS`;
 - if the panel API is not configured, the dashboard shows services/VPN/hardware
   and says inbounds/subscriptions are unavailable.
+
+### Mini App session
+
+The session is time-limited. The Maintenance section has a dropdown for 15
+minutes, 1 hour, 8 hours or 24 hours. Applying it reissues the cookie; when it
+expires, open the Mini App from Telegram again. The Sign out button ends the
+session in this browser. History and audit read the bot database in read-only
+mode, so charts use real samples instead of an empty separate database.
 
 ### Terminal (installed by the normal setup)
 

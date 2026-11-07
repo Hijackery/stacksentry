@@ -149,13 +149,13 @@ def test_confirmation_still_works_for_owner(
 # -------------------------------------------------------------- файлы
 
 
-def test_state_database_is_private(tmp_path: Path) -> None:
-    """В базе лежит журнал действий — посторонним читать её незачем."""
+def test_state_database_is_readable_only_by_service_group(tmp_path: Path) -> None:
+    """Webapp читает историю из базы бота, но писать в неё не должен."""
     path = tmp_path / "state.db"
     storage = Storage(path)
     try:
         mode = stat.S_IMODE(os.stat(path).st_mode)
-        assert mode == 0o600, oct(mode)
+        assert mode == 0o640, oct(mode)
     finally:
         storage.close()
 

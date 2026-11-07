@@ -42,6 +42,7 @@ from .updates import check_for_update
 
 COOKIE_NAME = "stacksentry_session"
 STATIC_DIR = Path(__file__).resolve().parent / "webapp_static"
+SESSION_TTLS = (900, 3600, 28800, 86400)
 
 
 @dataclass(frozen=True, slots=True)
@@ -53,10 +54,12 @@ class WebAppConfig:
     public_origin: str
     session_ttl: int
     terminal_origin: str = ""
+    bot_state_path: Path | None = None
 
     @classmethod
     def load(cls, env_file: Path | None = None) -> WebAppConfig:
         settings = load_settings(env_file)
+        bot_state_path = settings.state_path
         # Отдельная база Mini App. Не используем STATE_PATH: он уже задан в
         # .env для бота, а systemd EnvironmentFile перебивает Environment=.
         webapp_state = os.getenv("WEBAPP_STATE_PATH", "").strip()
@@ -77,6 +80,7 @@ class WebAppConfig:
             public_origin=settings.webapp_public_origin,
             session_ttl=max(300, settings.webapp_session_ttl),
             terminal_origin=settings.webapp_terminal_origin,
+            bot_state_path=bot_state_path,
         )
 
 
@@ -105,7 +109,9 @@ def issue_cookie(secret: str, user_id: int, ttl: int) -> str:
     return f"{body}.{_sign(secret, body)}"
 
 
-def verify_cookie(secret: str, cookie: str, *, now: float | None = None) -> int | None:
+def _cookie_payload(
+    secret: str, cookie: str, *, now: float | None = None
+) -> dict[str, Any] | None:
     body, sep, signature = cookie.partition(".")
     if not sep:
         return None
@@ -139,7 +145,19 @@ def verify_cookie(secret: str, cookie: str, *, now: float | None = None) -> int 
     # Ограничиваем срок жизни на сервере, даже если cookie подписали иначе.
     if issued > moment + 60 or expires <= moment or expires - issued > 86400:
         return None
-    return uid
+    return payload
+
+
+def verify_cookie(secret: str, cookie: str, *, now: float | None = None) -> int | None:
+    payload = _cookie_payload(secret, cookie, now=now)
+    return int(payload["uid"]) if payload is not None else None
+
+
+def cookie_expiry(
+    secret: str, cookie: str, *, now: float | None = None
+) -> float | None:
+    payload = _cookie_payload(secret, cookie, now=now)
+    return float(payload["exp"]) if payload is not None else None
 
 
 def _snapshot_json(snapshot: Any, age: float) -> dict[str, Any]:
@@ -165,6 +183,11 @@ class SessionRequest(BaseModel):
     model_config = ConfigDict(populate_by_name=True)
     init_data: str = Field(default="", alias="initData", max_length=8192)
     totp: str = Field(default="", max_length=32)
+    session_ttl: int = Field(default=0, alias="sessionTtl")
+
+
+class SessionTtl(BaseModel):
+    ttl: int
 
 
 def create_app(
@@ -172,10 +195,19 @@ def create_app(
     *,
     monitor: Monitor | None = None,
     storage: Storage | None = None,
+    analytics: Storage | None = None,
 ) -> FastAPI:
     app = FastAPI(docs_url=None, redoc_url=None, openapi_url=None)
     monitor = monitor or Monitor(config.settings)
     storage = storage or Storage(config.settings.state_path)
+    if analytics is None:
+        if (
+            config.bot_state_path
+            and config.bot_state_path != config.settings.state_path
+        ):
+            analytics = Storage(config.bot_state_path, read_only=True)
+        else:
+            analytics = storage
     snapshot_cache: dict[str, Any] = {"value": None, "at": 0.0}
     snapshot_lock = asyncio.Lock()
     update_cache: dict[str, Any] = {"value": None, "at": 0.0}
@@ -236,6 +268,19 @@ def create_app(
         if uid is None or uid not in config.settings.admin_ids:
             raise HTTPException(status_code=401, detail="нужен вход через Telegram")
         return uid
+
+    def set_session_cookie(response: Response, user_id: int, ttl: int) -> None:
+        cookie = issue_cookie(config.secret, user_id, ttl)
+        response.set_cookie(
+            COOKIE_NAME,
+            cookie,
+            max_age=ttl,
+            httponly=True,
+            # Telegram Web — iframe: строгий SameSite не отправит cookie.
+            secure=bool(config.public_origin),
+            samesite="none" if config.public_origin else "lax",
+            path="/",
+        )
 
     @app.get("/api/health")
     async def health() -> dict[str, Any]:
@@ -302,17 +347,10 @@ def create_app(
                     "message": "Mini App уже авторизован — откройте его заново.",
                 },
             )
-        cookie = issue_cookie(config.secret, user_id, config.session_ttl)
-        response.set_cookie(
-            COOKIE_NAME,
-            cookie,
-            max_age=config.session_ttl,
-            httponly=True,
-            # Telegram Web — iframe: строгий SameSite не отправит cookie.
-            secure=bool(config.public_origin),
-            samesite="none" if config.public_origin else "lax",
-            path="/",
-        )
+        ttl = body.session_ttl or config.session_ttl
+        if body.session_ttl and body.session_ttl not in SESSION_TTLS:
+            raise HTTPException(status_code=400, detail="недопустимый срок сессии")
+        set_session_cookie(response, user_id, ttl)
         return {
             "user": {
                 "id": user_id,
@@ -320,7 +358,38 @@ def create_app(
             },
             "panel_enabled": config.settings.panel_enabled,
             "services": list(config.settings.services),
+            "session_ttl": ttl,
         }
+
+    @app.get("/api/session/info")
+    async def session_info(
+        request: Request, user_id: int = Depends(current_user)
+    ) -> dict[str, Any]:
+        cookie = request.cookies.get(COOKIE_NAME, "")
+        expires = cookie_expiry(config.secret, cookie) if cookie else None
+        now = time.time()
+        return {
+            "expires_at": expires,
+            "seconds_left": max(0, int((expires or now) - now)),
+            "ttl_choices": list(SESSION_TTLS),
+            "default_ttl": config.session_ttl,
+        }
+
+    @app.post("/api/session/ttl")
+    async def session_ttl(
+        body: SessionTtl, response: Response, user_id: int = Depends(current_user)
+    ) -> dict[str, Any]:
+        if body.ttl not in SESSION_TTLS:
+            raise HTTPException(status_code=400, detail="недопустимый срок сессии")
+        set_session_cookie(response, user_id, body.ttl)
+        return {"session_ttl": body.ttl}
+
+    @app.post("/api/session/logout")
+    async def session_logout(
+        response: Response, user_id: int = Depends(current_user)
+    ) -> dict[str, bool]:
+        response.delete_cookie(COOKIE_NAME, path="/")
+        return {"ok": True}
 
     @app.get("/api/meta")
     async def meta(user_id: int = Depends(current_user)) -> dict[str, Any]:
@@ -435,8 +504,8 @@ def create_app(
             auth = request.headers.get("authorization", "")
             if not hmac.compare_digest(auth, f"Bearer {token}"):
                 raise HTTPException(status_code=401, detail="нужен токен метрик")
-        samples = await asyncio.to_thread(storage.count_samples)
-        pending = await asyncio.to_thread(storage.count_pending_alerts)
+        samples = await asyncio.to_thread(analytics.count_samples)
+        pending = await asyncio.to_thread(analytics.count_pending_alerts)
         body = (
             "\n".join(
                 (
@@ -514,14 +583,14 @@ def create_app(
     async def history(hours: int = 24, user_id: int = Depends(current_user)) -> Any:
         hours = max(1, min(hours, 720))
         rows = await asyncio.to_thread(
-            storage.get_series, time.time() - hours * 3600, hours
+            analytics.get_series, time.time() - hours * 3600, hours
         )
         return [dict(row) for row in rows]
 
     @app.get("/api/audit")
     async def audit(limit: int = 30, user_id: int = Depends(current_user)) -> Any:
         limit = max(1, min(limit, 200))
-        rows = await asyncio.to_thread(storage.recent_audit, limit)
+        rows = await asyncio.to_thread(analytics.recent_audit, limit)
         return [
             {
                 "ts": row["ts"],

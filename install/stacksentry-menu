@@ -102,8 +102,47 @@ menu_max() {
     printf '%s' "$max"
 }
 
+term_width() {
+    local width="${STACKSENTRY_WIDTH:-}"
+    if [ -n "$width" ]; then
+        printf '%s' "$width"
+        return
+    fi
+    if [ -t 1 ] && command -v tput >/dev/null 2>&1; then
+        width="$(tput cols 2>/dev/null || true)"
+    fi
+    printf '%s' "${width:-${COLUMNS:-80}}"
+}
+
+draw_compact_menu() {
+    local status="$1" width body
+    width="$(term_width)"
+    (( width < 24 )) && width=24
+    body=$((width - 6))
+    printf '\n%sStackSentry%s\n' "$BOLD" "$RESET"
+    printf '%s\n' "$(strip_ansi "$status")"
+    local spec kind payload wrapped
+    for spec in "${MENU_ROWS[@]}"; do
+        kind="${spec%%|*}"; payload="${spec#*|}"
+        case "$kind" in
+            g)
+                printf '\n%s%s%s\n' "$BOLD" "$payload" "$RESET"
+                ;;
+            s) printf '\n' ;;
+            *)
+                wrapped="$(printf '%s' "$payload" | fold -s -w "$body" | sed '2,$s/^/     /')"
+                printf ' %2s. %s\n' "$kind" "$wrapped"
+                ;;
+        esac
+    done
+}
+
 draw_menu() {
     local status="$1" title="StackSentry — панель управления"
+    if [ "${STACKSENTRY_COMPACT:-0}" = "1" ] || [ "$(term_width)" -lt 70 ]; then
+        draw_compact_menu "$status"
+        return
+    fi
     local -a rows=("$title" "$status") kinds=("title" "status")
     local spec kind payload
     for spec in "${MENU_ROWS[@]}"; do

@@ -182,6 +182,75 @@ def test_logs_endpoint_only_for_watched_services(
     assert client.get("/api/logs?service=ssh").status_code == 404
 
 
+def test_session_ttl_can_be_selected_and_logout_works(
+    make_settings: Callable[..., Settings], storage: Storage
+) -> None:
+    settings = make_settings(webapp_enabled=True, webapp_secret=SECRET)
+    app = create_app(
+        _config(settings),
+        monitor=FakeMonitor(),  # type: ignore[arg-type]
+        storage=storage,
+    )
+    client = TestClient(app)
+    client.post(
+        "/api/session",
+        json={"initData": _init_data(settings.telegram_token, nonce="ttl")},
+    )
+
+    info = client.get("/api/session/info")
+    assert info.status_code == 200
+    assert 900 in info.json()["ttl_choices"]
+
+    changed = client.post("/api/session/ttl", json={"ttl": 900})
+    assert changed.status_code == 200
+    assert changed.json()["session_ttl"] == 900
+    assert client.get("/api/session/info").json()["seconds_left"] <= 900
+
+    assert client.post("/api/session/ttl", json={"ttl": 1}).status_code == 400
+    assert client.post("/api/session/logout").status_code == 200
+    assert client.get("/api/status").status_code == 401
+
+
+def test_history_reads_bot_analytics_storage(
+    tmp_path: Path,
+    make_settings: Callable[..., Settings],
+) -> None:
+    bot_db = tmp_path / "bot.db"
+    web_db = tmp_path / "web.db"
+    analytics = Storage(bot_db)
+    analytics.record_sample(
+        SystemMetrics(
+            cpu_percent=12.0,
+            mem_percent=40.0,
+            mem_total_bytes=1024**3,
+            swap_percent=0.0,
+            disk_percent=30.0,
+            disk_free_bytes=10**9,
+            load1=0.1,
+            uptime_seconds=100.0,
+            tcp_connections=1,
+            net_sent_bytes=0,
+            net_recv_bytes=0,
+        )
+    )
+    settings = make_settings(webapp_enabled=True, webapp_secret=SECRET)
+    app = create_app(
+        _config(settings),
+        monitor=FakeMonitor(),  # type: ignore[arg-type]
+        storage=Storage(web_db),
+        analytics=analytics,
+    )
+    client = TestClient(app)
+    client.post(
+        "/api/session",
+        json={"initData": _init_data(settings.telegram_token, nonce="hist")},
+    )
+
+    response = client.get("/api/history?hours=24")
+    assert response.status_code == 200
+    assert response.json()
+
+
 def test_update_request_creates_spool_and_status(
     make_settings: Callable[..., Settings],
     storage: Storage,

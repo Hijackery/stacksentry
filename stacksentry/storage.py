@@ -139,16 +139,32 @@ class Storage:
     это безопасно в пределах одного процесса.
     """
 
-    def __init__(self, path: str | Path) -> None:
+    def __init__(self, path: str | Path, *, read_only: bool = False) -> None:
         self.path = Path(path)
-        self.path.parent.mkdir(parents=True, exist_ok=True)
         self._lock = threading.RLock()
+        if read_only:
+            if not self.path.is_file():
+                raise StorageError(f"База {self.path} не найдена")
+            self.conn = sqlite3.connect(
+                f"file:{self.path}?mode=ro",
+                uri=True,
+                isolation_level=None,
+                check_same_thread=False,
+            )
+            self.conn.row_factory = sqlite3.Row
+            self.conn.execute("PRAGMA query_only = ON")
+            self.conn.execute("PRAGMA busy_timeout = 5000")
+            return
+        self.path.parent.mkdir(parents=True, exist_ok=True)
         self.conn = sqlite3.connect(
             self.path, isolation_level=None, check_same_thread=False
         )
         self.conn.row_factory = sqlite3.Row
         try:
-            self.conn.execute("PRAGMA journal_mode = WAL")
+            # DELETE, а не WAL: webapp читает эту базу как отдельный
+            # пользователь с правами только на чтение. WAL-читателю нужен
+            # записываемый -shm, а это лишние права и зависимость от systemd.
+            self.conn.execute("PRAGMA journal_mode = DELETE")
             self.conn.execute("PRAGMA synchronous = NORMAL")
             # Даём другим читателям/писателям шанс освободить базу: без этого
             # параллельный доступ падал с «database is locked».
@@ -180,11 +196,15 @@ class Storage:
         umask процесса обычно уже 0077, но файл мог остаться от прежней
         установки с более широкими правами: приводим его к 0600 явно.
         """
-        for suffix in ("", "-wal", "-shm"):
+        # webapp читает метрики и аудит из этой же базы как отдельный
+        # непривилегированный пользователь из той же группы. Данные только
+        # на чтение; -shm нужен SQLite для WAL-транзакций.
+        modes = {"": 0o640, "-wal": 0o640, "-shm": 0o660}
+        for suffix, mode in modes.items():
             candidate = Path(f"{self.path}{suffix}")
             with suppress(OSError):
                 if candidate.exists():
-                    candidate.chmod(0o600)
+                    candidate.chmod(mode)
 
     def close(self) -> None:
         with self._lock:

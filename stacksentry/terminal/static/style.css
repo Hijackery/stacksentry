@@ -141,3 +141,19 @@ code { color: var(--accent); word-break: break-all; }
 @media (prefers-reduced-motion: reduce) {
   * { scroll-behavior: auto !important; }
 }
+
+@media (max-width: 520px) {
+  .bar {
+    flex-wrap: wrap;
+    gap: 6px 8px;
+    padding: 8px 10px;
+    padding-top: max(8px, env(safe-area-inset-top));
+  }
+  .brand { flex: 1 1 auto; }
+  .conn { margin-left: 0; }
+  .ghost { min-height: 36px; padding: 0 10px; }
+  .terminal { padding: 4px 4px 8px; }
+  .login { padding: 16px 10px; }
+  .card { padding: 18px 16px; border-radius: 12px; }
+  .setup-qr svg { width: min(200px, 100%); }
+}

@@ -13,7 +13,7 @@
   const BASE_TABS = [
     ["overview", "Обзор"], ["server", "Сервер"], ["services", "Службы"], ["panel", "Панель"],
     ["traffic", "Трафик"], ["subs", "Подписки"], ["history", "История"],
-    ["help", "Помощь"],
+    ["maintenance", "Обслуживание"], ["help", "Помощь"],
   ];
 
   function readPins() {
@@ -57,6 +57,8 @@
     snapshot: null,
     version: "",
     lang: (() => { try { return localStorage.getItem("stacksentry.lang") || ""; } catch (_) { return ""; } })(),
+    sessionInfo: null,
+    sessionSaving: false,
     update: null,
     updateAt: 0,
     updateLoading: false,
@@ -121,7 +123,7 @@
 
   const EN_TABS = {
     overview: "Overview", server: "Server", services: "Services", panel: "Panel",
-    traffic: "Traffic", subs: "Subscriptions", history: "History", help: "Help",
+    traffic: "Traffic", subs: "Subscriptions", history: "History", maintenance: "Maintenance", help: "Help",
     terminal: "Terminal",
   };
 
@@ -698,6 +700,64 @@
       state.updateTimer = setTimeout(poll, 2000);
     };
     poll();
+  }
+
+  function ttlLabel(seconds) {
+    const value = Number(seconds) || 0;
+    if (value >= 86400) return t("24 часа", "24 hours");
+    if (value >= 28800) return t("8 часов", "8 hours");
+    if (value >= 3600) return t("1 час", "1 hour");
+    return t("15 минут", "15 minutes");
+  }
+
+  function renderMaintenance() {
+    const info = state.sessionInfo;
+    const left = info ? Math.max(0, Math.round(Number(info.seconds_left) || 0)) : 0;
+    const choices = (info && info.ttl_choices ? info.ttl_choices : [900, 3600, 28800, 86400]);
+    const options = choices.map((value) => `<option value="${value}"${left && value >= left ? " selected" : ""}>${ttlLabel(value)}</option>`).join("");
+    return renderHero("ok", t("Обслуживание", "Maintenance"), t("Сессия Mini App и безопасность доступа.", "Mini App session and access security.")) +
+      `<section class="card">
+        <div class="card-head"><h2>${t("Сессия", "Session")}</h2><span class="chip ${left > 0 ? "ok" : "warn"}">${left > 0 ? `${left} ${t("сек", "s")}` : t("истекла", "expired")}</span></div>
+        <p class="hint">${t("Ограниченная сессия: выберите, сколько она будет действовать после применения.", "Limited session: choose how long it should remain valid after applying.")}</p>
+        <div class="toolbar"><div class="select"><label class="sr-only" for="session-ttl">${t("Срок сессии", "Session duration")}</label><select id="session-ttl">${options}</select></div>
+        <button class="primary" type="button" data-session-save ${state.sessionSaving ? "disabled" : ""}>${state.sessionSaving ? t("Сохраняю…", "Saving…") : t("Применить", "Apply")}</button></div>
+        <p class="hint">${t("После истечения cookie нужно снова открыть Mini App из Telegram.", "When the cookie expires, open the Mini App from Telegram again.")}</p>
+      </section>
+      <section class="card"><div class="card-head"><h2>${t("Выход", "Sign out")}</h2></div><p class="hint">${t("Завершает текущую сессию в этом браузере.", "Ends the current session in this browser.")}</p><button class="ghost" type="button" data-session-logout>${t("Выйти", "Sign out")}</button></section>`;
+  }
+
+  async function loadSessionInfo() {
+    try {
+      state.sessionInfo = await api("/api/session/info");
+    } catch (_) {
+      state.sessionInfo = null;
+    }
+  }
+
+  async function saveSessionTtl() {
+    const select = $("session-ttl");
+    if (!select || state.sessionSaving) return;
+    state.sessionSaving = true;
+    render(true);
+    try {
+      await api("/api/session/ttl", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ ttl: Number(select.value) }),
+      });
+      await loadSessionInfo();
+      showToast(t("Срок сессии обновлён", "Session duration updated"));
+    } catch (error) {
+      showToast(error.message || t("Не удалось изменить сессию", "Could not update the session"));
+    } finally {
+      state.sessionSaving = false;
+      render(true);
+    }
+  }
+
+  async function logoutSession() {
+    try { await api("/api/session/logout", { method: "POST" }); } catch (_) { /* ignore */ }
+    location.reload();
   }
 
   function renderHelp() {
@@ -1357,6 +1417,7 @@
     else if (state.active === "panel") view.innerHTML = renderPanel();
     else if (state.active === "traffic") view.innerHTML = renderTraffic();
     else if (state.active === "subs") renderSubs();
+    else if (state.active === "maintenance") view.innerHTML = renderMaintenance();
     else if (state.active === "help") view.innerHTML = renderHelp();
     else if (state.active === "history") {
       view.innerHTML = renderHistoryShell();
@@ -1460,7 +1521,14 @@
                autocomplete="one-time-code" maxlength="6" placeholder="000000"
                aria-describedby="totp-error" required>
         <p id="totp-error" class="error" role="alert"></p>
-        <button class="primary" type="submit">Войти</button>
+        <label for="auth-session-ttl">${t("Срок сессии", "Session duration")}</label>
+        <select id="auth-session-ttl" class="auth-select">
+          <option value="900">${t("15 минут", "15 minutes")}</option>
+          <option value="3600" selected>${t("1 час", "1 hour")}</option>
+          <option value="28800">${t("8 часов", "8 hours")}</option>
+          <option value="86400">${t("24 часа", "24 hours")}</option>
+        </select>
+        <button class="primary" type="submit">${t("Войти", "Sign in")}</button>
       </form>` : ""}
       ${help}
       <button id="retry-auth" class="ghost" type="button">Повторить</button>
@@ -1494,7 +1562,11 @@
         await api("/api/session", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ initData, totp: code }),
+          body: JSON.stringify({
+            initData,
+            totp: code,
+            sessionTtl: Number(($("auth-session-ttl") || {}).value || 3600),
+          }),
         });
         state.authPending = false;
         state.authRetry = 0;
@@ -1570,6 +1642,7 @@
       state.snapshot = snapshot;
       state.authRetry = 0;
       await loadMeta();
+      await loadSessionInfo();
       await render();
       if (state.updateRequest && !state.updateTimer) startUpdatePolling();
     } catch (error) {
@@ -1693,6 +1766,14 @@
       const value = Number(hoursButton.dataset.metricHours);
       state.metricHours = [24, 168, 720].includes(value) ? value : 24;
       render();
+      return;
+    }
+    if (event.target.closest("[data-session-save]")) {
+      saveSessionTtl();
+      return;
+    }
+    if (event.target.closest("[data-session-logout]")) {
+      logoutSession();
       return;
     }
     if (event.target.closest("[data-dashboard-toggle]")) {

@@ -2976,7 +2976,7 @@ install_webapp() {
     cat > /etc/systemd/system/stacksentry-webapp.service <<EOF
 [Unit]
 Description=StackSentry — read-only Mini App
-After=network-online.target
+After=network-online.target ${SERVICE_NAME}.service
 Wants=network-online.target
 
 [Service]
