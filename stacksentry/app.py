@@ -397,15 +397,18 @@ class MonitorBot(CommandMixin, JobsMixin):
         delivered = True
         for chunk in chunks:
             try:
-                await _send_with_retry(
-                    self.app.bot.send_message,
-                    chat_id=chat_id,
-                    text=chunk,
-                    parse_mode=ParseMode.HTML,
-                    reply_markup=markup,
-                    **({"message_thread_id": thread_id} if thread_id else {}),
+                await asyncio.wait_for(
+                    _send_with_retry(
+                        self.app.bot.send_message,
+                        chat_id=chat_id,
+                        text=chunk,
+                        parse_mode=ParseMode.HTML,
+                        reply_markup=markup,
+                        **({"message_thread_id": thread_id} if thread_id else {}),
+                    ),
+                    timeout=15,
                 )
-            except TelegramError as exc:
+            except (TelegramError, asyncio.TimeoutError) as exc:
                 logger.error(
                     "Не удалось отправить сообщение в чат %s: %s",
                     _mask_id(chat_id),

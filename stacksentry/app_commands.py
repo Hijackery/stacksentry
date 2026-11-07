@@ -428,16 +428,30 @@ class CommandMixin(BotBase):
         """Показывает экран в том же сообщении, не создавая новое окно."""
         if not chat_id:
             return None
-        async with self._screen_lock(chat_id):
-            previous = await self._tracked_screen(chat_id)
+        lock = self._screen_lock(chat_id)
+        try:
+            await asyncio.wait_for(lock.acquire(), timeout=5)
+            locked = True
+        except asyncio.TimeoutError:
+            locked = False
+            logger.error(
+                "Экран чата …%s занят больше 5 с, отвечаю без блокировки",
+                str(chat_id)[-3:],
+            )
+        try:
             target = bot or self.app.bot
+            previous = await self._tracked_screen(chat_id) if locked else 0
             # Главное правило: сначала правим существующий экран. Даже если
             # Telegram не даёт удалять старые сообщения, новые не появляются.
-            if previous and await self._edit_message(
-                chat_id, previous, text, markup=markup, bot=target
+            if (
+                locked
+                and previous
+                and await self._edit_message(
+                    chat_id, previous, text, markup=markup, bot=target
+                )
             ):
                 return None
-            if previous:
+            if locked and previous:
                 with suppress(TelegramError, asyncio.TimeoutError):
                     await asyncio.wait_for(
                         target.delete_message(chat_id, previous), timeout=3
@@ -449,15 +463,18 @@ class CommandMixin(BotBase):
             if reply_to is None:
                 send_kwargs["chat_id"] = chat_id
             try:
-                sent = await _send_with_retry(
-                    sender,
-                    text=text,
-                    parse_mode=ParseMode.HTML,
-                    disable_web_page_preview=True,
-                    reply_markup=markup,
-                    **send_kwargs,
+                sent = await asyncio.wait_for(
+                    _send_with_retry(
+                        sender,
+                        text=text,
+                        parse_mode=ParseMode.HTML,
+                        disable_web_page_preview=True,
+                        reply_markup=markup,
+                        **send_kwargs,
+                    ),
+                    timeout=15,
                 )
-            except TelegramError as exc:
+            except (TelegramError, asyncio.TimeoutError) as exc:
                 logger.warning("Не удалось отправить экран: %s", exc)
                 return None
             if sent is None:
@@ -466,6 +483,9 @@ class CommandMixin(BotBase):
             if isinstance(mid, int):
                 await self._remember_screen(chat_id, mid)
             return cast(Message | None, sent)
+        finally:
+            if locked:
+                lock.release()
 
     async def _replace_or_notify(
         self,
@@ -575,7 +595,14 @@ class CommandMixin(BotBase):
     async def _adopt_screen(self, message: Message) -> None:
         """Делает сообщение, на кнопку которого нажали, единственным экраном."""
         chat_id = message.chat_id
-        async with self._screen_lock(chat_id):
+        lock = self._screen_lock(chat_id)
+        try:
+            await asyncio.wait_for(lock.acquire(), timeout=5)
+        except asyncio.TimeoutError:
+            logger.error("Экран занят, не жду удаления старого сообщения")
+            await self._remember_screen(chat_id, message.message_id)
+            return
+        try:
             previous = await self._tracked_screen(chat_id)
             if previous and previous != message.message_id:
                 try:
@@ -588,6 +615,8 @@ class CommandMixin(BotBase):
                     # продолжаем с нажатым экраном, чтобы действие не сорвалось.
                     logger.debug("Не удалось удалить лишний экран: %s", exc)
             await self._remember_screen(chat_id, message.message_id)
+        finally:
+            lock.release()
 
     async def _edit(
         self,
